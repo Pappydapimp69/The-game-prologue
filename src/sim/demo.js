@@ -39,7 +39,9 @@ export function demoCommands() {
     { type: 'MELEE', enemyId: 'husk2' },
     { type: 'MELEE', enemyId: 'husk2' },
     { type: 'MELEE', enemyId: 'husk2' },
-    // Quest should complete (2 husks + capsule). Spend the reward.
+    // Walk east to the pass — the reach objective completes the quest.
+    M(1, 0), M(1, 0), M(1, 0), M(1, 0),
+    // Spend the reward.
     { type: 'BUY', itemId: 'tonic' },
     { type: 'USE_ITEM', itemId: 'tonic' },
     { type: 'TICK' }, { type: 'TICK' },

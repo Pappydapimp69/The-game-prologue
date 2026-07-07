@@ -12,10 +12,13 @@ import { makeWorld } from '../src/sim/world.js';
 import { replay } from '../src/sim/reduce.js';
 import { DEMO_SEED, demoCommands } from '../src/sim/demo.js';
 import { readonly } from '../src/app/readonly.js';
+import { CONTENT } from '../src/sim/content.js';
+import { validateContent } from '../src/sim/validate.js';
+import { canSense } from '../src/sim/info.js';
 
 // Baked golden value for the demo playthrough. An INTENDED sim/content change
 // updates this one line (review the diff); an unintended divergence is a bug.
-const GOLDEN_DEMO_FINGERPRINT = 'a3152602';
+const GOLDEN_DEMO_FINGERPRINT = '201c297b';
 
 const failures = [];
 let count = 0;
@@ -191,18 +194,87 @@ test('out-of-range attacks refuse instead of hitting', () => {
   assert(w.enemies.husk1.hp === w.enemies.husk1.maxHp);
 });
 
+console.log('# stage 3: content validation ladder');
+
+const corrupt = (fn) => {
+  const c = JSON.parse(JSON.stringify(CONTENT));
+  fn(c);
+  return validateContent(c);
+};
+
+test('shipped content passes the full ladder', () => {
+  const errors = validateContent(CONTENT);
+  assertEqual(errors.length, 0, `content invalid:\n      ${errors.join('\n      ')}`);
+});
+
+test('a typo fails the build, not the player', () => {
+  const cases = [
+    ['npc offers unknown quest', (c) => { c.regions['foothold-vale'].npcs.warden.offers = 'clear-the-roads'; }],
+    ['kill target with no spawns', (c) => { c.quests['clear-the-road'].objectives[0].target = 'huskk'; }],
+    ['pickup of unknown item', (c) => { c.regions['foothold-vale'].pickups.capsule1.item = 'training-capsul'; }],
+    ['enemy of unknown kind', (c) => { c.regions['foothold-vale'].enemies.husk1.kind = 'huskk'; }],
+    ['reach zone that does not exist', (c) => { c.quests['clear-the-road'].objectives[2].zone = 'east-past'; }],
+    ['shop item with no price', (c) => { delete c.items.tonic.price; }],
+    ['spawn on a blocked tile', (c) => { c.regions['foothold-vale'].enemies.husk1.x = 10; c.regions['foothold-vale'].enemies.husk1.y = 5; }],
+    ['collect objective for unobtainable item', (c) => { delete c.regions['foothold-vale'].pickups.capsule1; }],
+    ['zone out of bounds', (c) => { c.regions['foothold-vale'].zones['east-pass'].x = 99; }],
+  ];
+  for (const [name, fn] of cases) {
+    assert(corrupt(fn).length > 0, `validator missed: ${name}`);
+  }
+});
+
+console.log('# stage 3: archetypes, perception gating, difficulty');
+
+test('archetypes template identity; growth stays use-based', () => {
+  const b = makeWorld(7, { archetype: 'brawler' });
+  const s = makeWorld(7, { archetype: 'seeker' });
+  assert(b.player.skills.melee.lvl === 2 && s.player.skills.melee.lvl === 1, 'archetype skills wrong');
+  assert(b.player.maxHp !== s.player.maxHp, 'archetype hp identical');
+  let threw = false;
+  try { makeWorld(7, { archetype: 'warlock' }); } catch { threw = true; }
+  assert(threw, 'unknown archetype accepted');
+});
+
+test('perception gates information (the earned scouter)', () => {
+  const brawler = makeWorld(7, { archetype: 'brawler' });   // perception 1
+  const seeker = makeWorld(7, { archetype: 'seeker' });     // perception 2
+  assert(!canSense(brawler.player, 'husk'), 'brawler should NOT read a husk (senseReq 2)');
+  assert(canSense(seeker.player, 'husk'), 'seeker should read a husk');
+  assert(!canSense(seeker.player, 'stalker'), 'stalker needs perception 3');
+});
+
+test('difficulty is a sim setting: harsh hits +1 over gentle, same roll', () => {
+  const hit = (difficulty) => {
+    const w = makeWorld(99, { difficulty });
+    w.player.x = w.enemies.husk1.x - 1; w.player.y = w.enemies.husk1.y;
+    replay(w, [{ type: 'ENEMY_STRIKE', enemyId: 'husk1' }]);
+    return w.player.maxHp - w.player.hp;
+  };
+  assertEqual(hit('harsh'), hit('gentle') + 1, 'harsh/gentle delta');
+});
+
+test('reach objective progresses on entering the zone', () => {
+  const w = makeWorld(5);
+  replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  w.player.x = 17; w.player.y = 8; // one step west of the zone edge (r=2 around 20,8)
+  const ev = replay(w, [{ type: 'MOVE', dx: 1, dy: 0 }]);
+  assert(ev.some((e) => e.type === 'objective_progress' && e.objective === 2), 'reach did not progress');
+});
+
 console.log('# renderer boundary');
 
 test('read-only proxy throws on any write, at any depth', () => {
   const w = makeWorld(1);
   const ro = readonly(w);
   assertEqual(ro.player.hp, w.player.hp, 'proxy must read through');
+  const hpBefore = w.player.hp;
   let threw = 0;
   try { ro.player.hp = 0; } catch { threw++; }
   try { ro.tick = 99; } catch { threw++; }
   try { delete ro.player; } catch { threw++; }
   assertEqual(threw, 3, 'a renderer write slipped through the boundary');
-  assertEqual(w.player.hp, 20, 'underlying state was mutated');
+  assertEqual(w.player.hp, hpBefore, 'underlying state was mutated');
 });
 
 console.log('# determinism guard: forbidden tokens in src/sim');

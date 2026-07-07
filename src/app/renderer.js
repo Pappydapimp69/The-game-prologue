@@ -3,6 +3,8 @@
 // sprite positions, toast fades) lives HERE, never in authoritative state.
 // Returns this frame's touch/click zones so input hit-tests what was drawn.
 
+import { canSense, enemyReadout } from '../sim/info.js';
+
 export const TILE = 20;
 export const OX = 80, OY = 20; // world viewport offset inside the canvas
 
@@ -72,10 +74,19 @@ export function render(ctx, w, view) {
     ctx.fillStyle = e.alive ? COLORS.enemy : COLORS.dead;
     ctx.fillRect(x + 4, y + 4, TILE - 8, TILE - 8);
     if (e.alive) {
-      ctx.fillStyle = COLORS.bar;
-      ctx.fillRect(x + 2, y - 5, TILE - 4, 3);
-      ctx.fillStyle = COLORS.hp;
-      ctx.fillRect(x + 2, y - 5, (TILE - 4) * (e.hp / e.maxHp), 3);
+      // Skill-gated information: exact readout only if perception clears the
+      // kind's senseReq — otherwise the world just shows "???".
+      if (canSense(w.player, e.kind)) {
+        ctx.fillStyle = COLORS.bar;
+        ctx.fillRect(x + 2, y - 5, TILE - 4, 3);
+        ctx.fillStyle = COLORS.hp;
+        ctx.fillRect(x + 2, y - 5, (TILE - 4) * (e.hp / e.maxHp), 3);
+      }
+      ctx.fillStyle = COLORS.dim;
+      ctx.font = '8px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(enemyReadout(w.player, e), x + TILE / 2, y - 8);
+      ctx.textAlign = 'left';
     }
   }
 
@@ -117,7 +128,9 @@ export function render(ctx, w, view) {
       const st = w.quests.active[qId];
       ctx.fillStyle = COLORS.dim;
       def.objectives.forEach((o, i) => {
-        const label = o.type === 'kill' ? `defeat ${o.target}` : `find ${o.item}`;
+        const label = o.type === 'kill' ? `defeat ${o.target}`
+          : o.type === 'collect' ? `find ${o.item}`
+          : `reach ${o.zone}`;
         ctx.fillText(`${label} ${st.progress[i]}/${o.n || 1}`, canvas.width - 10, qy);
         qy += 13;
       });

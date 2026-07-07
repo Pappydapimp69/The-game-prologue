@@ -34,7 +34,9 @@ export function reduce(state, command) {
       if (state.region.blocked[`${nx},${ny}`]) return [{ type: 'blocked', x: nx, y: ny }];
       state.player.x = nx;
       state.player.y = ny;
-      return [{ type: 'moved', x: nx, y: ny }];
+      const events = [{ type: 'moved', x: nx, y: ny }];
+      questProgress(state, events, 'reach', null);
+      return events;
     }
 
     case 'TALK': {
@@ -112,7 +114,9 @@ export function reduce(state, command) {
       const e = livingEnemy(state, command.enemyId, 'ENEMY_STRIKE');
       if (typeof e === 'object' && e.type) return [e];
       if (dist(state.player, e) > MELEE_RANGE) return [{ type: 'too_far', target: command.enemyId }];
-      const dmg = e.power + nextInt(state.rng, 3);
+      // Difficulty is a SETTING, not a decision — both tones ship (gentle is
+      // the prologue default; harsh raises every enemy hit by 1).
+      const dmg = e.power + nextInt(state.rng, 3) + (state.settings.difficulty === 'harsh' ? 1 : 0);
       state.player.hp = Math.max(0, state.player.hp - dmg);
       const events = [{ type: 'player_hit', by: command.enemyId, dmg, hp: state.player.hp }];
       if (state.player.hp === 0) events.push({ type: 'player_defeated' });
@@ -120,8 +124,9 @@ export function reduce(state, command) {
     }
 
     case 'BUY': {
-      const item = state.shop[command.itemId];
+      const item = state.items[command.itemId];
       if (!item) throw new Error(`BUY: no item ${command.itemId}`);
+      if (item.price === undefined) return [{ type: 'not_for_sale', item: command.itemId }];
       if (state.player.coins < item.price) return [{ type: 'cant_afford', item: command.itemId }];
       state.player.coins -= item.price;
       state.player.inventory.push(command.itemId);
@@ -131,7 +136,7 @@ export function reduce(state, command) {
     case 'USE_ITEM': {
       const idx = state.player.inventory.indexOf(command.itemId);
       if (idx === -1) return [{ type: 'no_item', item: command.itemId }];
-      const item = state.shop[command.itemId];
+      const item = state.items[command.itemId];
       if (!item || !item.heal) return [{ type: 'cant_use', item: command.itemId }];
       state.player.inventory.splice(idx, 1);
       state.player.hp = Math.min(state.player.maxHp, state.player.hp + item.heal);
@@ -194,9 +199,15 @@ function questProgress(state, events, type, target) {
     let done = true;
     def.objectives.forEach((obj, i) => {
       if (obj.type === type) {
-        const want = obj.type === 'kill' ? obj.target : obj.item;
         const need = obj.n || 1;
-        if (want === target && st.progress[i] < need) {
+        let match = false;
+        if (obj.type === 'kill') match = obj.target === target;
+        else if (obj.type === 'collect') match = obj.item === target;
+        else if (obj.type === 'reach') {
+          const z = state.region.zones[obj.zone];
+          match = !!z && Math.max(Math.abs(state.player.x - z.x), Math.abs(state.player.y - z.y)) <= z.r;
+        }
+        if (match && st.progress[i] < need) {
           st.progress[i] += 1;
           events.push({ type: 'objective_progress', quest: qId, objective: i, at: st.progress[i], of: need });
         }

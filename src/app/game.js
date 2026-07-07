@@ -6,6 +6,7 @@
 
 import { makeWorld } from '../sim/world.js';
 import { reduce } from '../sim/reduce.js';
+import { CONTENT } from '../sim/content.js';
 import { readonly } from './readonly.js';
 import { makeInput } from './input.js';
 import { render } from './renderer.js';
@@ -18,11 +19,11 @@ const MAX_FRAME_MS = 100;   // cap max delta or any stall becomes chaos
 
 const dist = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
-export function startGame(canvas, seed) {
+export function startGame(canvas, seed, options = {}) {
   const ctx = canvas.getContext('2d');
   const input = makeInput(canvas);
 
-  let world = makeWorld(seed);
+  let world = makeWorld(seed, options);
   let ro = readonly(world);
   const view = {
     px: world.player.x, py: world.player.y,
@@ -51,20 +52,27 @@ export function startGame(canvas, seed) {
     switch (e.type) {
       case 'talked': {
         const npc = world.npcs[e.npc];
-        if (e.npc === 'keeper') {
+        // Presentation text (dialog) comes from CONTENT; sim state stays lean.
+        const lines = CONTENT.regions[world.region.id].npcs[e.npc]?.dialog || [];
+        if (npc.shop && npc.shop.length) {
+          const itemId = npc.shop[0];
+          const item = world.items[itemId];
           view.modal = {
-            kind: 'shop', title: npc.name,
-            lines: [`Tonic — heals 5 HP — costs 3 coins. You have ${world.player.coins}.`],
+            kind: 'shop', itemId, title: npc.name,
+            lines: [
+              ...lines,
+              `${item.name} — heals ${item.heal} HP — ${item.price} coins. You have ${world.player.coins}.`,
+            ],
             buttons: [
-              { id: 'confirm', label: 'Buy Tonic (Enter)' },
-              { id: 'alt', label: 'Drink Tonic (K)' },
+              { id: 'confirm', label: `Buy ${item.name} (Enter)` },
+              { id: 'alt', label: `Drink ${item.name} (K)` },
               { id: 'cancel', label: 'Leave (Esc)' },
             ],
           };
         } else if (!view.modal) {
           view.modal = {
             kind: 'dialog', title: npc.name,
-            lines: ['The road east is crawling with husks.', 'Stay sharp out there.'],
+            lines,
             buttons: [{ id: 'cancel', label: 'Close (Esc)' }],
           };
         }
@@ -128,13 +136,13 @@ export function startGame(canvas, seed) {
     const m = view.modal;
     if (presses.confirm || (m.kind !== 'shop' && presses.interact)) {
       if (m.kind === 'offer') { dispatch({ type: 'ACCEPT_QUEST', questId: m.quest }); closeModal(); toast('Quest accepted'); }
-      else if (m.kind === 'shop') { dispatch({ type: 'BUY', itemId: 'tonic' }); }
-      else if (m.kind === 'defeat') { world = makeWorld(seed); ro = readonly(world); closeModal(); toast('A new dawn'); }
+      else if (m.kind === 'shop') { dispatch({ type: 'BUY', itemId: m.itemId }); }
+      else if (m.kind === 'defeat') { world = makeWorld(seed, options); ro = readonly(world); closeModal(); toast('A new dawn'); }
       else closeModal();
       return;
     }
     if (presses.alt || presses.blast) {
-      if (m.kind === 'shop') dispatch({ type: 'USE_ITEM', itemId: 'tonic' });
+      if (m.kind === 'shop') dispatch({ type: 'USE_ITEM', itemId: m.itemId });
       return;
     }
     if (presses.cancel || presses.dodge) closeModal();

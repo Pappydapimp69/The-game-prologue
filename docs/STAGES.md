@@ -65,13 +65,29 @@ Evidence:
   presses are now CAPTURED at event time into a pending queue that the next
   frame consumes. Filed to Brain.
 
-## Stage 3 — Content systems, data-driven
+## Stage 3 — Content systems, data-driven ✅ (closed 2026-07-07)
 
-Quests/enemies/NPCs/items as JSON referencing objective TYPES handled in the
-reducer. Validation ladder in smoke: schema → referential integrity /
-completability → headless playthrough. Archetypes at creation; skill-gated
-information (perception); quests offered, never pushed; Gentle/Harsh setting.
-Success: a typo'd content id fails smoke, not the player.
+Scope: all content moved to `src/sim/content.js` (pure data — regions, NPCs
+w/ dialog + shops, enemy kinds, items, quests, zones, archetypes); makeWorld
+builds state FROM content (definitions copied in, so a running save never
+shifts under a content edit); new `reach` objective type; archetypes
+(Brawler/Channeler/Seeker) front-load identity, growth stays use-based;
+perception-gated information (enemy readout shows exact HP/power only past
+the kind's senseReq — the earned scouter); Gentle/Harsh difficulty as an
+authoritative sim setting (harsh: +1 enemy damage).
+
+Evidence:
+- `npm run smoke`: 27/27. Golden updated once: `201c297b`.
+- Validation ladder live: schema → referential integrity → completability →
+  headless playthrough. Nine deliberate content corruptions (typo'd quest id,
+  kill target with no spawns, unobtainable item, unknown enemy kind, missing
+  zone, unpriced shop item, spawn on blocked tile, out-of-bounds zone) all
+  fail the build, not the player.
+- Perception verified visually: Seeker reads husks, stalker stays "???".
+- Difficulty verified deterministic: harsh = gentle + 1 on the same roll.
+- Stage 2 e2e re-run green; Node/Chromium parity on the new golden.
+- Fixed en route: quest tracker rendered "find undefined" for reach
+  objectives (label switch missing the new type).
 
 ## Stage 4 — The Prologue arc
 
