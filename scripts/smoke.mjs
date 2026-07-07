@@ -16,6 +16,7 @@ import { CONTENT } from '../src/sim/content.js';
 import { validateContent } from '../src/sim/validate.js';
 import { canSense } from '../src/sim/info.js';
 import { exportSaga, importSaga } from '../src/sim/saga.js';
+import { isNight, DAY_CYCLE_TICKS } from '../src/sim/daynight.js';
 
 // Baked golden value for the demo playthrough. An INTENDED sim/content change
 // updates this one line (review the diff); an unintended divergence is a bug.
@@ -349,6 +350,26 @@ test('export refuses before the prologue ends', () => {
   let threw = false;
   try { exportSaga(w); } catch { threw = true; }
   assert(threw, 'exported an unfinished game');
+});
+
+console.log('# stage 5: day/night clock');
+
+test('isNight is a pure integer function of tick — deterministic, no clock reads', () => {
+  assertEqual(isNight(0), false, 'high noon should be day');
+  assertEqual(isNight(DAY_CYCLE_TICKS / 2), true, 'half-cycle should flip to night');
+  assertEqual(isNight(DAY_CYCLE_TICKS - 1), true, 'just before wrap should still be night');
+  assertEqual(isNight(DAY_CYCLE_TICKS), false, 'wraps back to day');
+});
+
+test('night stacks +1 enemy damage on top of difficulty, deterministically', () => {
+  const strike = (tick) => {
+    const w = makeWorld(11);
+    w.tick = tick;
+    w.player.x = w.enemies.husk1.x - 1; w.player.y = w.enemies.husk1.y;
+    replay(w, [{ type: 'ENEMY_STRIKE', enemyId: 'husk1' }]);
+    return w.player.maxHp - w.player.hp;
+  };
+  assertEqual(strike(DAY_CYCLE_TICKS / 2), strike(0) + 1, 'night should add exactly +1 over day, same roll');
 });
 
 console.log('# renderer boundary');

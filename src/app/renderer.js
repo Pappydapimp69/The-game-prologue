@@ -8,7 +8,7 @@ import { canSense, enemyReadout } from '../sim/info.js';
 export const TILE = 20;
 export const OX = 80, OY = 20; // world viewport offset inside the canvas
 
-const COLORS = {
+export const COLORS = {
   bg: '#05070f', ground: '#101527', grid: '#141b33', wall: '#2b3350',
   player: '#ffb74d', aura: '#7ec8ff', npc: '#6de0c2', enemy: '#e05a5a',
   dead: '#3a3f52', crate: '#a1745b', pickup: '#ffd75e', text: '#cdd6f4',
@@ -20,6 +20,11 @@ export function render(ctx, w, view) {
   const zones = [];
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Screen shake offsets the WORLD layer only — HUD/modal text must stay
+  // readable, so it's restored before any of that is drawn.
+  ctx.save();
+  ctx.translate(view.shakeX || 0, view.shakeY || 0);
 
   // --- region ---
   ctx.fillStyle = COLORS.ground;
@@ -46,7 +51,7 @@ export function render(ctx, w, view) {
     const [x, y] = tile(d.x, d.y);
     ctx.strokeStyle = COLORS.crate;
     if (d.broken) { ctx.strokeRect(x + 5, y + 5, TILE - 10, TILE - 10); }
-    else { ctx.fillStyle = COLORS.crate; ctx.fillRect(x + 3, y + 3, TILE - 6, TILE - 6); }
+    else { ctx.fillStyle = COLORS.crate; fillSquashed(ctx, x + 3, y + 3, TILE - 6, TILE - 6, view.punch[id] || 0); }
   }
   for (const id of Object.keys(w.pickups)) {
     const p = w.pickups[id];
@@ -79,7 +84,7 @@ export function render(ctx, w, view) {
     const [x, y] = tile(e.x, e.y);
     const big = id === w.arc.bossDef.id ? 4 : 0; // the Ravager looms
     ctx.fillStyle = e.alive ? COLORS.enemy : COLORS.dead;
-    ctx.fillRect(x + 4 - big, y + 4 - big, TILE - 8 + big * 2, TILE - 8 + big * 2);
+    fillSquashed(ctx, x + 4 - big, y + 4 - big, TILE - 8 + big * 2, TILE - 8 + big * 2, view.punch[id] || 0);
     if (e.alive) {
       // Skill-gated information: exact readout only if perception clears the
       // kind's senseReq — otherwise the world just shows "???".
@@ -109,8 +114,19 @@ export function render(ctx, w, view) {
   }
   if (view.dodging) ctx.globalAlpha = 0.45;
   ctx.fillStyle = COLORS.player;
-  ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
+  // A quick stretch (not a squash) on the player's own landed hit — reads as
+  // a lunge rather than an impact taken.
+  fillSquashed(ctx, px + 3, py + 3, TILE - 6, TILE - 6, view.playerPunch || 0, true);
   ctx.globalAlpha = 1;
+
+  // Night: a world-clock decision (raises enemy aggression, see
+  // src/sim/daynight.js), tinted here so it reads as pressure, not paint.
+  if (view.night > 0.05) {
+    ctx.fillStyle = `rgba(8,12,36,${(view.night * 0.4).toFixed(3)})`;
+    ctx.fillRect(OX, OY, w.region.w * TILE, w.region.h * TILE);
+  }
+
+  ctx.restore(); // end of the shaken world layer
 
   // --- HUD ---
   ctx.textAlign = 'left';
@@ -247,6 +263,19 @@ export function render(ctx, w, view) {
   }
 
   return zones;
+}
+
+// Squash & stretch: `strength` 0..1 decaying, drawn as a volume-preserving
+// deformation around the rect's center — wider+shorter (impact taken) or
+// taller+narrower (stretch, e.g. the player's own lunge). Cosmetic only.
+function fillSquashed(ctx, x, y, w, h, strength, stretch = false) {
+  if (!strength) { ctx.fillRect(x, y, w, h); return; }
+  const amt = 0.35 * strength;
+  const sx = stretch ? 1 - amt * 0.6 : 1 + amt;
+  const sy = stretch ? 1 + amt * 0.6 : 1 - amt;
+  const cx = x + w / 2, cy = y + h / 2;
+  const nw = w * sx, nh = h * sy;
+  ctx.fillRect(cx - nw / 2, cy - nh / 2, nw, nh);
 }
 
 function bar(ctx, x, y, w, h, frac, color, label) {

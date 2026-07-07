@@ -12,6 +12,7 @@
 //   activates it. Declining costs nothing and the offer stays available.
 
 import { nextInt } from './rng.js';
+import { isNight } from './daynight.js';
 
 const MELEE_RANGE = 1;   // Chebyshev tiles
 const BLAST_RANGE = 3;
@@ -154,8 +155,11 @@ function reduceCore(state, command) {
       if (typeof e === 'object' && e.type) return [e];
       if (dist(state.player, e) > MELEE_RANGE) return [{ type: 'too_far', target: command.enemyId }];
       // Difficulty is a SETTING, not a decision — both tones ship (gentle is
-      // the prologue default; harsh raises every enemy hit by 1).
-      const dmg = e.power + nextInt(state.rng, 3) + (state.settings.difficulty === 'harsh' ? 1 : 0);
+      // the prologue default; harsh raises every enemy hit by 1). Night
+      // stacks its own +1: the clock is pressure, not paint.
+      const dmg = e.power + nextInt(state.rng, 3)
+        + (state.settings.difficulty === 'harsh' ? 1 : 0)
+        + (isNight(state.tick) ? 1 : 0);
       state.player.hp = Math.max(0, state.player.hp - dmg);
       const events = [{ type: 'player_hit', by: command.enemyId, dmg, hp: state.player.hp }];
       if (state.player.hp === 0) events.push({ type: 'player_defeated' });

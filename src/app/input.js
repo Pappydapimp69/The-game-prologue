@@ -88,7 +88,8 @@ export function makeInput(canvas) {
       if (z) { down[z.id] = true; device = 'touch'; }
     }
     // Event-time captures: count as down this frame even if already released.
-    for (const name of Object.keys(pending)) down[name] = true;
+    const firedPending = Object.keys(pending);
+    for (const name of firedPending) down[name] = true;
     pending = {};
 
     // Gamepad: poll — never trust the connect event.
@@ -111,6 +112,13 @@ export function makeInput(canvas) {
     for (const a of ACTIONS) {
       if (down[a] && !prev[a]) presses[a] = true;
       prev[a] = down[a];
+    }
+    // Zone ids outside the fixed action vocabulary (title-screen buttons,
+    // archetype cards, …) are one-shot by construction — they only ever
+    // enter `pending` at click/tap event time, never held-sampled — so any
+    // such id firing this frame is a press with no edge-tracking needed.
+    for (const name of firedPending) {
+      if (!ACTIONS.includes(name)) presses[name] = true;
     }
     const move = {
       dx: (down.right ? 1 : 0) - (down.left ? 1 : 0),

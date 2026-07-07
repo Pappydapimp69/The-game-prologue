@@ -11,6 +11,8 @@ import { exportSaga } from '../sim/saga.js';
 import { readonly } from './readonly.js';
 import { makeInput } from './input.js';
 import { render } from './renderer.js';
+import { saveGame, clearSave } from './save.js';
+import { nightAmount } from './daynight-tint.js';
 
 const MOVE_REPEAT_MS = 140;
 const TICK_MS = 500;
@@ -20,30 +22,50 @@ const MAX_FRAME_MS = 100;   // cap max delta or any stall becomes chaos
 
 const dist = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
-export function startGame(canvas, seed, options = {}) {
+export function startGame(canvas, seed, options = {}, initialWorld = null) {
   const ctx = canvas.getContext('2d');
   const input = makeInput(canvas);
 
-  let world = makeWorld(seed, options);
+  let world = initialWorld || makeWorld(seed, options);
   let ro = readonly(world);
   const view = {
     px: world.player.x, py: world.player.y,
     toasts: [], modal: null, dodging: false, device: 'keyboard',
-    guide: '',
+    guide: '', shakeX: 0, shakeY: 0, punch: {}, playerPunch: 0, night: 0,
   };
-  // The vale greets you once.
-  view.modal = {
-    kind: 'dialog', title: 'PROLOGUE',
-    lines: CONTENT.arc.intro,
-    buttons: [{ id: 'confirm', label: 'Begin (Enter)' }],
-  };
+  // The vale greets you once — but not a run resumed from a save.
+  if (!initialWorld) {
+    view.modal = {
+      kind: 'dialog', title: 'PROLOGUE',
+      lines: CONTENT.arc.intro,
+      buttons: [{ id: 'confirm', label: 'Begin (Enter)' }],
+    };
+  }
   let nextMoveAt = 0, nextTickAt = 0, dodgeUntil = 0;
   const enemyCd = {};
-  let last = 0;
+  let last = 0, frameNow = 0;
+
+  // Juice: additive presentation-only feedback, driven by sim EVENTS, never
+  // by writes to state. Hit-stop briefly freezes gameplay LOGIC (not the
+  // render loop, so shake/decay still animate) — the pause is what sells an
+  // impact as costing something. Screen shake and per-entity "punch" (a
+  // squash pulse) are pure cosmetic reactions to what already happened.
+  let hitStopUntil = 0, shakeUntil = 0, shakeStart = 0, shakeMag = 0;
+  const PUNCH_MS = 160, PLAYER_PUNCH_MS = 120;
+  const punchUntil = {};
+  let playerPunchUntil = 0;
+  function hitStop(ms) { hitStopUntil = Math.max(hitStopUntil, frameNow + ms); }
+  function shake(mag, ms) {
+    if (frameNow + ms >= shakeUntil) { shakeStart = frameNow; shakeUntil = frameNow + ms; }
+    shakeMag = Math.max(shakeMag, mag);
+  }
+  function punch(id) { punchUntil[id] = frameNow + PUNCH_MS; }
+  function playerPunch() { playerPunchUntil = frameNow + PLAYER_PUNCH_MS; }
 
   function dispatch(cmd) {
     const events = reduce(world, cmd);
     for (const e of events) onEvent(e);
+    if (!world.flags.ended) saveGame(world);
     return events;
   }
 
@@ -105,10 +127,18 @@ export function startGame(canvas, seed, options = {}) {
         break;
       }
       case 'picked_up': toast(`Picked up ${e.item}`); break;
-      case 'broke': toast(`Crate smashed — +${e.coins} coins`); break;
-      case 'enemy_hit': toast(`Hit for ${e.dmg}`); break;
+      case 'broke': toast(`Crate smashed — +${e.coins} coins`); punch(e.target); shake(2, 90); break;
+      case 'enemy_hit':
+        toast(`Hit for ${e.dmg}`);
+        punch(e.target);
+        if (e.kind === 'melee' || e.kind === 'aura') playerPunch();
+        hitStop(e.kind === 'aura' ? 70 : 45);
+        shake(Math.min(6, 2 + e.dmg * 0.6), 120);
+        break;
       case 'enemy_defeated':
         toast(`${e.kind} defeated!`);
+        hitStop(90);
+        shake(5, 160);
         if (e.target === world.arc.bossDef.id) {
           view.modal = {
             kind: 'fate', title: 'It kneels, beaten',
@@ -120,7 +150,11 @@ export function startGame(canvas, seed, options = {}) {
           };
         }
         break;
-      case 'player_hit': toast(`Took ${e.dmg} damage`); break;
+      case 'player_hit':
+        toast(`Took ${e.dmg} damage`);
+        hitStop(60);
+        shake(Math.min(8, 3 + e.dmg * 0.7), 180);
+        break;
       case 'skill_up': toast(`${e.skill} rose to ${e.lvl}!`); break;
       case 'objective_progress': toast(`${e.quest}: ${e.at}/${e.of}`); break;
       case 'quest_completed': toast(`Quest complete! +${e.reward.coins} coins`); break;
@@ -139,6 +173,8 @@ export function startGame(canvas, seed, options = {}) {
         break;
       case 'exit_locked': toast('The gate is sealed. You are not done here.'); break;
       case 'boss_appeared':
+        shake(10, 450);
+        hitStop(150);
         view.modal = {
           kind: 'dialog', title: 'The Ravager',
           lines: CONTENT.arc.bossAppeared,
@@ -146,6 +182,8 @@ export function startGame(canvas, seed, options = {}) {
         };
         break;
       case 'mentor_fallen':
+        shake(8, 300);
+        hitStop(150);
         view.modal = {
           kind: 'dialog', title: 'Oren falls',
           lines: CONTENT.arc.mentorFallen,
@@ -153,6 +191,7 @@ export function startGame(canvas, seed, options = {}) {
         };
         break;
       case 'prologue_complete': {
+        clearSave(); // nothing left to continue into — the run is finished
         const code = exportSaga(world);
         view.modal = {
           kind: 'finale', title: 'THE VALE FALLS BEHIND', code,
@@ -272,12 +311,20 @@ export function startGame(canvas, seed, options = {}) {
   function frame(now) {
     const dt = Math.min(now - last || 16, MAX_FRAME_MS);
     last = now;
+    frameNow = now;
 
     const { move, presses, device } = input.poll();
     view.device = input.hasTouch && device === 'keyboard' ? 'touch' : device;
 
-    if (view.modal) handleModal(presses);
-    else handleWorld(now, move, presses);
+    // Hit-stop: gameplay logic freezes for a few dozen ms; the frame still
+    // renders, so the shake/punch from the hit that caused it plays out.
+    // Freeze windows are short (45-150ms) — an instantaneous tap landing
+    // inside one is a rare, low-stakes miss, not a correctness issue.
+    const frozen = now < hitStopUntil;
+    if (!frozen) {
+      if (view.modal) handleModal(presses);
+      else handleWorld(now, move, presses);
+    }
 
     // The guide line: the arc's next incomplete step, in order. One hint at
     // a time — never a checklist dump.
@@ -298,6 +345,25 @@ export function startGame(canvas, seed, options = {}) {
     view.dodging = now < dodgeUntil;
     for (const t of view.toasts) t.ttl -= dt;
     view.toasts = view.toasts.filter((t) => t.ttl > 0);
+
+    // Screen shake: random jitter that eases out over its window; entirely
+    // cosmetic, computed fresh each frame from `now` (no stored ambient
+    // state that would need to survive save/load — it's presentation only).
+    if (now < shakeUntil) {
+      const span = Math.max(1, shakeUntil - shakeStart);
+      const decay = Math.max(0, (shakeUntil - now) / span);
+      view.shakeX = (Math.random() * 2 - 1) * shakeMag * decay;
+      view.shakeY = (Math.random() * 2 - 1) * shakeMag * decay;
+    } else {
+      view.shakeX = 0; view.shakeY = 0; shakeMag = 0;
+    }
+    for (const id of Object.keys(punchUntil)) {
+      const remain = punchUntil[id] - now;
+      if (remain <= 0) { delete punchUntil[id]; delete view.punch[id]; }
+      else view.punch[id] = Math.max(0, Math.min(1, remain / PUNCH_MS));
+    }
+    view.playerPunch = Math.max(0, Math.min(1, (playerPunchUntil - now) / PLAYER_PUNCH_MS));
+    view.night = nightAmount(world.tick);
 
     input.setZones(render(ctx, ro, view));
     requestAnimationFrame(frame);

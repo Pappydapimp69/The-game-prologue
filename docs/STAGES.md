@@ -113,11 +113,37 @@ Evidence:
   up with a well-formed code; screenshot captured. Stage 2 e2e green.
 - Fixed en route: modal text/button overlap on long payload lines.
 
-## Stage 5 — Feel + ship
+## Stage 5 — Feel + ship ✅ (closed 2026-07-07)
 
-Screen shake / hit-stop / aura glow; day-night tint with night aggression;
-title screen (Continue / New Game / Controls — New Game calls the real full
-reset); GitHub Pages deploy workflow (explicit Actions workflow, not the
-dynamic builder).
-Success: 60–90 min finish by a new player on phone or gamepad, nothing read
-outside the game.
+Scope: game feel — screen shake, hit-stop (brief gameplay-logic freeze on
+impact; rendering keeps running so the shake/punch plays out), squash-on-hit
+for enemies/crates, a lunge-stretch for the player's own landed attacks, all
+purely presentational and driven by sim events (zero changes to authoritative
+state); day/night as an integer world-clock (`src/sim/daynight.js`, no
+transcendental math — the sim's determinism guard still passes) that stacks
++1 enemy damage at night, with a cosmetic tint (`src/app/daynight-tint.js`,
+free to use easing math since it's presentation-only); a title screen
+(Continue / New Game / Controls) with an archetype + Gentle/Harsh picker,
+fully keyboard/gamepad-navigable (stick or D-pad cycles, confirm selects) and
+click/tap-operable; a single localStorage save slot with autosave after every
+dispatch, New Game always going through the real `makeWorld()` (never
+reopening setup over stale state), and an overwrite confirmation before a
+save is destroyed; an explicit GitHub Pages deploy workflow (runs the smoke
+suite as a gate, then `configure-pages`/`upload-pages-artifact`/`deploy-pages`
+— not the dynamic builder, which can queue silently).
+
+Evidence:
+- `npm run smoke`: 37/37 (new: day/night determinism + damage-stacking
+  tests). Golden fingerprint unchanged (`dd14f521`) — juice and day/night
+  touch nothing the golden replay exercises differently.
+- Browser e2e (title flow, archetype selection, save/continue round-trip,
+  overwrite confirmation): 8/8 passing. Continue resumes the exact position,
+  archetype, and quest progress after a full page reload; declining the
+  overwrite prompt preserves the existing save.
+- Stage 2 and Stage 4 e2e re-run green through the new title-screen gate.
+- Real bug found & fixed: `input.js`'s press vocabulary was hard-limited to
+  the fixed ACTIONS list, so title-screen zone ids (outside that list, unlike
+  modal buttons which deliberately reuse action names) never fired — pending
+  event-time captures now promote directly to one-shot presses regardless of
+  vocabulary. Found because the title screen simply didn't respond to clicks
+  in first testing.
