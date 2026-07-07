@@ -1,0 +1,10 @@
+{
+  "name": "the-game-prologue",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Prologue — game 1 of a 5-part open-world 2D RPG saga. Vanilla JS + canvas, zero dependencies.",
+  "scripts": {
+    "smoke": "node scripts/smoke.mjs"
+  }
+}
