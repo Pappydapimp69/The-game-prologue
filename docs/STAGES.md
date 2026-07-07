@@ -22,13 +22,25 @@ Evidence:
   replayed roll count; transcendental Math (sin/cos/…) banned from src/sim
   (engine-implementation-defined), IEEE-exact ops (sqrt/floor/…) allowed.
 
-## Stage 1 — Sim core (real verbs)
+## Stage 1 — Sim core (real verbs) ✅ (closed 2026-07-07)
 
-Replace walking-skeleton commands with the real vocabulary: movement on the
-region grid, talk/interact/break, melee, dodge (i-frames = withholding the
-damage command), aura blast + charge meter, inventory/shop, quest accept +
-objective progress, use-based skill growth, save/load slots.
-Success: scripted headless playthrough of every verb; golden updated once.
+Scope: real command vocabulary replacing the walking skeleton — MOVE on the
+region grid with blocked-tile collision, TALK, ACCEPT_QUEST (offered, never
+pushed), INTERACT (one-shot pickups deactivate instantly), BREAK, MELEE,
+CHARGE + AURA_BLAST (meter, range, cost), ENEMY_STRIKE (enemy aggression is
+its own command; dodge i-frames = the renderer withholding it — no
+invulnerability flag in state), BUY, USE_ITEM; use-based skill growth
+(melee/aura/perception); quest objective progress by TYPE (kill/collect —
+the code/content seam) with completion + reward.
+
+Evidence:
+- `npm run smoke`: 20/20 passing. Golden updated once: `a3152602`.
+- Demo script exercises every verb end-to-end (quest completed, both enemies
+  down, capsule collected, crate broken, tonic bought and consumed, skills
+  grew from use).
+- Verb-contract tests: offer-not-push, blocked movement, aura meter
+  need/cap, out-of-range refusal, no-invuln-flag invariant.
+- Browser parity re-verified in Chromium: `a3152602` matches Node.
 
 ## Stage 2 — Render + input
 

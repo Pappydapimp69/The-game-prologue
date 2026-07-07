@@ -9,7 +9,7 @@ import { replay } from './sim/reduce.js';
 import { fingerprint } from './sim/fingerprint.js';
 import { DEMO_SEED, demoCommands } from './sim/demo.js';
 
-const GOLDEN_DEMO_FINGERPRINT = '007a5d05'; // must match scripts/smoke.mjs
+const GOLDEN_DEMO_FINGERPRINT = 'a3152602'; // must match scripts/smoke.mjs
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -30,7 +30,7 @@ function boot() {
 
   ctx.fillStyle = '#8892b0';
   ctx.font = '14px system-ui, sans-serif';
-  ctx.fillText('Stage 0 — deterministic harness', canvas.width / 2, 120);
+  ctx.fillText('Stage 1 — sim core (headless verbs)', canvas.width / 2, 120);
 
   ctx.font = '16px ui-monospace, monospace';
   ctx.fillStyle = match ? '#7CFC9A' : '#ff6b6b';

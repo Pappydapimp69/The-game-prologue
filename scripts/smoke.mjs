@@ -14,7 +14,7 @@ import { DEMO_SEED, demoCommands } from '../src/sim/demo.js';
 
 // Baked golden value for the demo playthrough. An INTENDED sim/content change
 // updates this one line (review the diff); an unintended divergence is a bug.
-const GOLDEN_DEMO_FINGERPRINT = '007a5d05';
+const GOLDEN_DEMO_FINGERPRINT = 'a3152602';
 
 const failures = [];
 let count = 0;
@@ -133,6 +133,61 @@ test('unknown command fails loud', () => {
   let threw = false;
   try { replay(makeWorld(1), [{ type: 'NOPE' }]); } catch { threw = true; }
   assert(threw);
+});
+
+console.log('# stage 1 verbs');
+
+test('demo playthrough exercises every verb end-to-end', () => {
+  const w = runDemo();
+  assert(w.quests.completed['clear-the-road'] === 1, 'quest not completed');
+  assert(!w.enemies.husk1.alive && !w.enemies.husk2.alive, 'husks still alive');
+  assert(w.pickups.capsule1.taken === 1, 'capsule not taken');
+  assert(w.destructibles.crate1.broken === 1, 'crate not broken');
+  assert(w.player.inventory.includes('training-capsule'), 'capsule not in inventory');
+  assert(!w.player.inventory.includes('tonic'), 'tonic bought but not consumed');
+  assert(w.player.hp > 0 && w.player.hp <= w.player.maxHp, `hp out of range: ${w.player.hp}`);
+  assert(w.player.skills.melee.xp > 0 || w.player.skills.melee.lvl > 1, 'melee use gave no growth');
+  assert(w.player.skills.aura.xp > 0 || w.player.skills.aura.lvl > 1, 'aura use gave no growth');
+});
+
+test('quests are offered, never pushed', () => {
+  const w = makeWorld(1);
+  const ev = replay(w, [{ type: 'TALK', npcId: 'warden' }]);
+  assert(ev.some(e => e.type === 'quest_offered'), 'no offer event');
+  assert(w.quests.offered['clear-the-road'] === 1, 'not in offered');
+  assert(!w.quests.active['clear-the-road'], 'quest auto-activated — must require ACCEPT_QUEST');
+});
+
+test('blocked tile stops movement', () => {
+  const w = makeWorld(1);
+  w.player.x = 9; w.player.y = 5;
+  const ev = replay(w, [{ type: 'MOVE', dx: 1, dy: 0 }]);
+  assert(ev.some(e => e.type === 'blocked'));
+  assert(w.player.x === 9 && w.player.y === 5, 'player moved into a wall');
+});
+
+test('aura blast needs charge; charge caps at max', () => {
+  const w = makeWorld(1);
+  w.player.x = 11; w.player.y = 6; // in range of husk1
+  const ev = replay(w, [{ type: 'AURA_BLAST', enemyId: 'husk1' }]);
+  assert(ev.some(e => e.type === 'no_aura'), 'blast fired with empty meter');
+  replay(w, Array.from({ length: 20 }, () => ({ type: 'CHARGE' })));
+  assert(w.player.aura === w.player.maxAura, 'charge blew past max');
+  const ev2 = replay(w, [{ type: 'AURA_BLAST', enemyId: 'husk1' }]);
+  assert(ev2.some(e => e.type === 'enemy_hit'), 'charged blast did not hit');
+});
+
+test('no invulnerability flag exists — i-frames are command-withholding', () => {
+  const w = runDemo();
+  assert(!('invulnerable' in w.player) && !('iframes' in w.player),
+    'transient combat flags leaked into authoritative state');
+});
+
+test('out-of-range attacks refuse instead of hitting', () => {
+  const w = makeWorld(1);
+  const ev = replay(w, [{ type: 'MELEE', enemyId: 'husk1' }]); // spawn is far away
+  assert(ev.some(e => e.type === 'too_far'));
+  assert(w.enemies.husk1.hp === w.enemies.husk1.maxHp);
 });
 
 console.log('# determinism guard: forbidden tokens in src/sim');
