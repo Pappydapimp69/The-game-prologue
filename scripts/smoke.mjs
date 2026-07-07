@@ -22,7 +22,16 @@ import { describeObjective } from '../src/app/objective-text.js';
 
 // Baked golden value for the demo playthrough. An INTENDED sim/content change
 // updates this one line (review the diff); an unintended divergence is a bug.
-const GOLDEN_DEMO_FINGERPRINT = '1d995e50';
+// Updated for the ironhusk/wardhusk immunity redesign: demo.js's combat
+// script against husk1/husk2 legitimately changed (a deliberate wrong-method
+// no_effect attempt before the correct-method kill on each, since each is
+// now immune to one attack kind, plus generous charge/blast/melee cycles so
+// the script stays a guaranteed kill regardless of RNG seed — it also runs
+// against the title screen's own boot seed, not just DEMO_SEED) — this is an
+// intended content/script change, not an unintended regression.
+// History: '1d995e50' (pre-redesign) -> 'ca67ce29' (first immunity pass,
+// exact-tuned to DEMO_SEED) -> current (generalized to any seed).
+const GOLDEN_DEMO_FINGERPRINT = '96562397';
 
 const failures = [];
 let count = 0;
@@ -158,6 +167,14 @@ test('demo playthrough exercises every verb end-to-end', () => {
   assert(w.player.skills.aura.xp > 0 || w.player.skills.aura.lvl > 1, 'aura use gave no growth');
 });
 
+test('the golden demo script itself exercises the no_effect refusal path (locked in, not just unit-tested)', () => {
+  const w = makeWorld(DEMO_SEED);
+  const events = replay(w, demoCommands());
+  const noEffects = events.filter((e) => e.type === 'no_effect');
+  assert(noEffects.some((e) => e.target === 'husk1' && e.kind === 'melee'), 'demo never tries melee on the ironhusk (husk1)');
+  assert(noEffects.some((e) => e.target === 'husk2' && e.kind === 'aura'), 'demo never tries aura on the wardhusk (husk2)');
+});
+
 test('quests are offered, never pushed', () => {
   const w = makeWorld(1);
   const ev = replay(w, [{ type: 'TALK', npcId: 'warden' }]);
@@ -267,12 +284,13 @@ test('a typo fails the build, not the player', () => {
     ['kill target with no spawns', (c) => { c.quests['clear-the-road'].objectives[0].target = 'huskk'; }],
     ['pickup of unknown item', (c) => { c.regions['foothold-vale'].pickups.capsule1.item = 'training-capsul'; }],
     ['enemy of unknown kind', (c) => { c.regions['foothold-vale'].enemies.husk1.kind = 'huskk'; }],
-    ['reach zone that does not exist', (c) => { c.quests['clear-the-road'].objectives[2].zone = 'east-past'; }],
+    ['reach zone that does not exist', (c) => { c.quests['clear-the-road'].objectives[3].zone = 'east-past'; }],
     ['shop item with no price', (c) => { delete c.items.tonic.price; }],
     ['spawn on a blocked tile', (c) => { c.regions['foothold-vale'].enemies.husk1.x = 10; c.regions['foothold-vale'].enemies.husk1.y = 5; }],
     ['collect objective for unobtainable item', (c) => { delete c.regions['foothold-vale'].pickups.capsule1; }],
     ['zone out of bounds', (c) => { c.regions['foothold-vale'].zones['east-pass'].x = 99; }],
     ['quest unlocks a nonexistent enemy id', (c) => { c.quests['clear-the-road'].unlocks.enemies.push('husk3'); }],
+    ['bad immune value', (c) => { c.enemyKinds.ironhusk.immune = 'fire'; }],
   ];
   for (const [name, fn] of cases) {
     assert(corrupt(fn).length > 0, `validator missed: ${name}`);
@@ -314,104 +332,121 @@ test('reach objective progresses on entering the zone', () => {
   replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
   w.player.x = 17; w.player.y = 8; // one step west of the zone edge (r=2 around 20,8)
   const ev = replay(w, [{ type: 'MOVE', dx: 1, dy: 0 }]);
-  assert(ev.some((e) => e.type === 'objective_progress' && e.objective === 2), 'reach did not progress');
+  // objective 3: [0]=kill ironhusk, [1]=kill wardhusk, [2]=collect, [3]=reach
+  assert(ev.some((e) => e.type === 'objective_progress' && e.objective === 3), 'reach did not progress');
 });
 
-console.log('# quest kill objectives: weapon-agnostic tracking + respawn safety net');
+console.log('# quest kill objectives: per-kind immunity instead of respawn');
 
 // Reported symptom: melee kills on "Clear the Road" husks supposedly didn't
 // advance the kill count the way aura-blast kills did. hitEnemy() passes the
 // ENEMY's kind (e.kind) to questProgress, never the attack kind — so on a
-// reading of reduce.js this already looked weapon-agnostic. These tests get
-// ground truth from the running sim, locking in whichever was true so a
-// regression can't reintroduce the reported confusion silently.
+// reading of reduce.js this already looked weapon-agnostic, and that held up
+// under test. The design settled on since: two husk VARIANTS, each immune to
+// exactly one attack kind, so the quest can never be stalled by using "the
+// wrong" method on both of its only two targets — the other method always
+// still works on the other husk. This replaces the earlier respawn-timer
+// safety net entirely (simpler, and reusable for future enemies/buffs).
 
-const killWithMelee = (w, id) => {
-  w.player.x = w.enemies[id].x - 1; w.player.y = w.enemies[id].y;
+const moveAdjacent = (w, id) => { w.player.x = w.enemies[id].x - 1; w.player.y = w.enemies[id].y; };
+
+const chargeTo = (w, aura) => {
   let guard = 0;
-  while (w.enemies[id].alive && guard++ < 50) replay(w, [{ type: 'MELEE', enemyId: id }]);
-  assert(!w.enemies[id].alive, `${id} did not die within the guard budget`);
+  while (w.player.aura < aura && guard++ < 50) replay(w, [{ type: 'CHARGE', start: guard === 1 }]);
 };
 
-const killWithBlast = (w, id) => {
-  w.player.x = w.enemies[id].x - 1; w.player.y = w.enemies[id].y;
+test('hitting an ironhusk (immune: melee) with MELEE does 0 damage and refuses with no_effect', () => {
+  const w = makeWorld(1);
+  replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  moveAdjacent(w, 'husk1');
+  assertEqual(w.enemies.husk1.kind, 'ironhusk', 'setup: husk1 should be an ironhusk');
+  const hpBefore = w.enemies.husk1.hp;
+  const ev = replay(w, [{ type: 'MELEE', enemyId: 'husk1' }]);
+  assert(ev.some((e) => e.type === 'no_effect' && e.kind === 'melee'), 'expected a no_effect event, not a silent no-op');
+  assert(!ev.some((e) => e.type === 'enemy_hit'), 'an immune hit must not also emit enemy_hit');
+  assertEqual(w.enemies.husk1.hp, hpBefore, 'immune melee hit changed hp');
+  assert(w.enemies.husk1.alive === 1, 'immune melee hit killed the target');
+});
+
+test('hitting a wardhusk (immune: aura) with AURA_BLAST does 0 damage and refuses with no_effect', () => {
+  const w = makeWorld(1);
+  replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  moveAdjacent(w, 'husk2');
+  assertEqual(w.enemies.husk2.kind, 'wardhusk', 'setup: husk2 should be a wardhusk');
+  chargeTo(w, 3);
+  const hpBefore = w.enemies.husk2.hp;
+  const ev = replay(w, [{ type: 'AURA_BLAST', enemyId: 'husk2' }]);
+  assert(ev.some((e) => e.type === 'no_effect' && e.kind === 'aura'), 'expected a no_effect event, not a silent no-op');
+  assertEqual(w.enemies.husk2.hp, hpBefore, 'immune aura hit changed hp');
+  assert(w.enemies.husk2.alive === 1, 'immune aura hit killed the target');
+});
+
+test('killing each husk with its CORRECT method advances its OWN kill objective, not the other one', () => {
+  const w = makeWorld(1);
+  replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  // objectives: [0]=kill ironhusk, [1]=kill wardhusk, [2]=collect, [3]=reach
+  moveAdjacent(w, 'husk1');
+  chargeTo(w, 3);
   let guard = 0;
-  while (w.enemies[id].alive && guard++ < 50) {
-    if (w.player.aura < 3) replay(w, [{ type: 'CHARGE', start: guard === 1 }]);
-    else replay(w, [{ type: 'AURA_BLAST', enemyId: id }]);
+  while (w.enemies.husk1.alive && guard++ < 50) {
+    if (w.player.aura < 3) chargeTo(w, 3);
+    else replay(w, [{ type: 'AURA_BLAST', enemyId: 'husk1' }]);
   }
-  assert(!w.enemies[id].alive, `${id} did not die within the guard budget`);
-};
+  assertEqual(w.quests.active['clear-the-road'].progress[0], 1, 'blasting the ironhusk down did not advance objective 0');
+  assertEqual(w.quests.active['clear-the-road'].progress[1], 0, 'blasting the ironhusk down should not touch the wardhusk objective');
 
-test('melee-killing both husks advances the kill objective exactly like blast-killing them', () => {
-  const wMelee = makeWorld(1);
-  replay(wMelee, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
-  killWithMelee(wMelee, 'husk1');
-  assertEqual(wMelee.quests.active['clear-the-road'].progress[0], 1, 'melee kill #1 did not advance the kill objective');
-  killWithMelee(wMelee, 'husk2');
-  assert(wMelee.quests.completed['clear-the-road'] !== 1, 'kill objective alone should not complete the quest (collect/reach still pending)');
-
-  const wBlast = makeWorld(1);
-  replay(wBlast, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
-  killWithBlast(wBlast, 'husk1');
-  assertEqual(wBlast.quests.active['clear-the-road'].progress[0], 1, 'blast kill #1 did not advance the kill objective');
-  killWithBlast(wBlast, 'husk2');
-
-  assert(!wMelee.enemies.husk1.alive && !wMelee.enemies.husk2.alive, 'melee run: husks should be dead');
-  assert(!wBlast.enemies.husk1.alive && !wBlast.enemies.husk2.alive, 'blast run: husks should be dead');
+  moveAdjacent(w, 'husk2');
+  guard = 0;
+  while (w.enemies.husk2.alive && guard++ < 50) replay(w, [{ type: 'MELEE', enemyId: 'husk2' }]);
+  assertEqual(w.quests.active['clear-the-road'].progress[1], 1, 'meleeing the wardhusk down did not advance objective 1');
+  assertEqual(w.quests.active['clear-the-road'].progress[0], 1, 'meleeing the wardhusk down should not double-count the ironhusk objective');
 });
 
-test('kill-objective safety net: an unlocked husk respawns if all are dead before the objective is satisfied', () => {
+test('"Clear the Road" is fully completable headlessly using the correct method on each husk', () => {
   const w = makeWorld(1);
   replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
-  killWithMelee(w, 'husk1');
-  killWithMelee(w, 'husk2');
-  // Under shipped content this always satisfies the objective (exactly 2
-  // husks unlock for a need of 2) — the safety net is defense-in-depth, not
-  // reachable through normal play. Simulate the regression it guards
-  // against: both unlocked targets dead, objective still short.
-  delete w.quests.completed['clear-the-road'];
-  w.quests.active['clear-the-road'] = { progress: [1, 1, 1], respawnAt: [0, 0, 0] };
-  assert(!w.enemies.husk1.alive && !w.enemies.husk2.alive, 'setup invariant broken: both husks should be dead');
 
-  replay(w, [{ type: 'TICK' }]);
-  assert(!w.enemies.husk1.alive && !w.enemies.husk2.alive, 'respawn fired instantly instead of after a delay');
-
-  for (let i = 0; i < 20 && !(w.enemies.husk1.alive || w.enemies.husk2.alive); i++) {
-    replay(w, [{ type: 'TICK' }]);
+  moveAdjacent(w, 'husk1'); // ironhusk — blast it
+  let guard = 0;
+  while (w.enemies.husk1.alive && guard++ < 50) {
+    if (w.player.aura < 3) chargeTo(w, 3);
+    else replay(w, [{ type: 'AURA_BLAST', enemyId: 'husk1' }]);
   }
-  assert(w.enemies.husk1.alive || w.enemies.husk2.alive, 'no husk respawned within a reasonable tick budget');
+  moveAdjacent(w, 'husk2'); // wardhusk — melee it
+  guard = 0;
+  while (w.enemies.husk2.alive && guard++ < 50) replay(w, [{ type: 'MELEE', enemyId: 'husk2' }]);
+
+  const capsule = w.pickups.capsule1;
+  w.player.x = capsule.x - 1; w.player.y = capsule.y;
+  replay(w, [{ type: 'INTERACT', pickupId: 'capsule1' }]);
+
+  const zone = w.region.zones['east-pass'];
+  w.player.x = zone.x; w.player.y = zone.y;
+  replay(w, [{ type: 'MOVE', dx: 0, dy: 0 }]);
+
+  assertEqual(w.quests.completed['clear-the-road'], 1, 'quest did not complete via the correct method on each husk');
 });
 
-test('the safety net never fires once the kill objective is already satisfied', () => {
+test('ironhusk/wardhusk stay quest-gated — do not exist before "Clear the Road" is accepted', () => {
+  const fresh = makeWorld(1);
+  assert(!fresh.enemies.husk1 && !fresh.enemies.husk2, 'husks pre-spawned before quest acceptance');
   const w = makeWorld(1);
-  replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
-  killWithMelee(w, 'husk1');
-  killWithMelee(w, 'husk2');
-  assertEqual(w.quests.active['clear-the-road'].progress[0], 2, 'setup: kill objective should read 2/2');
-  for (let i = 0; i < 20; i++) replay(w, [{ type: 'TICK' }]);
-  assert(!w.enemies.husk1.alive && !w.enemies.husk2.alive, 'a satisfied kill objective must not respawn its targets');
-});
-
-test('the safety net backfills respawnAt on a pre-existing save that predates it', () => {
-  const w = makeWorld(1);
-  replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
-  // Simulate a save serialized before this field existed.
-  delete w.quests.active['clear-the-road'].respawnAt;
   let threw = false;
-  try { replay(w, [{ type: 'TICK' }]); } catch { threw = true; }
-  assert(!threw, 'loading a pre-existing save without respawnAt should not crash the reducer');
-  assert(Array.isArray(w.quests.active['clear-the-road'].respawnAt), 'respawnAt was not backfilled');
+  try { replay(w, [{ type: 'MELEE', enemyId: 'husk1' }]); } catch { threw = true; }
+  assert(threw, 'attacking a not-yet-unlocked enemy id should fail loud, not silently no-op');
+  const ev = replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  assert(ev.some((e) => e.type === 'enemy_appeared' && e.target === 'husk1' && e.kind === 'ironhusk'), 'husk1 did not appear as ironhusk on accept');
+  assert(ev.some((e) => e.type === 'enemy_appeared' && e.target === 'husk2' && e.kind === 'wardhusk'), 'husk2 did not appear as wardhusk on accept');
 });
 
-test('the respawn safety net does not leak into the golden demo playthrough', () => {
-  const w = runDemo();
-  // The demo always keeps at least one husk alive while the other is being
-  // finished off (see demo.js), so the "all unlocked targets dead" trigger
-  // never fires — no extra enemy id should exist beyond what the demo spawns.
-  const expected = ['husk1', 'husk2', 'stalker1', 'ravager1'].sort();
-  assertEqual(Object.keys(w.enemies).sort().join(','), expected.join(','),
-    'unexpected enemy ids in state — respawn logic fired during the golden demo');
+test('the quest tracker shows two distinct, differentiated kill lines instead of one generic count', () => {
+  const w = makeWorld(1);
+  replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  const lines = w.quests.defs['clear-the-road'].objectives.filter((o) => o.type === 'kill').map(describeObjective);
+  assertEqual(lines.length, 2, 'expected exactly two kill objective lines');
+  assert(lines[0] !== lines[1], 'the two kill lines read identically — not differentiated');
+  assert(lines.some((l) => l.toLowerCase().includes('ironhusk')), 'no line names the ironhusk');
+  assert(lines.some((l) => l.toLowerCase().includes('wardhusk')), 'no line names the wardhusk');
 });
 
 console.log('# stage 4: the prologue arc');
@@ -542,12 +577,19 @@ test('describeObjective covers all three objective types with no undefined', () 
   const collect = describeObjective({ type: 'collect', item: 'training-capsule' });
   const reach = describeObjective({ type: 'reach', zone: 'east-pass' });
   for (const s of [kill, collect, reach]) assert(!s.includes('undefined'), `leaked undefined: ${s}`);
-  assert(kill.includes('husk') && kill.includes('2'));
+  // kill target 'husk' resolves through enemyKinds['husk'].name ("Husk"),
+  // so this is case-insensitive rather than a raw-id substring match.
+  assert(kill.toLowerCase().includes('husk') && kill.includes('2'));
   assert(collect.includes('training-capsule'));
   assert(reach.toLowerCase().includes('east') && reach.toLowerCase().includes('pass'));
   let threw = false;
   try { describeObjective({ type: 'nope' }); } catch { threw = true; }
   assert(threw, 'unknown objective type should fail loud, not silently stringify to undefined');
+});
+
+test('describeObjective falls back to the raw target id if no enemyKind matches (never throws on a typo)', () => {
+  const kill = describeObjective({ type: 'kill', target: 'made-up-kind', n: 1 });
+  assert(kill.includes('made-up-kind'), 'expected a fallback to the raw id, not a crash or blank');
 });
 
 console.log('# renderer boundary');

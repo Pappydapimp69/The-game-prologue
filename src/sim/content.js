@@ -39,7 +39,19 @@ export const CONTENT = {
   enemyKinds: {
     // senseReq: perception level needed to read exact HP/power (the scouter
     // as an earned skill, not a gadget).
+    // immune: an attack KIND ('melee' | 'aura') this enemy takes 0 damage
+    // from — a generic, reusable resistance field, not specific to any one
+    // enemy. Absent/undefined = no immunity. A future enemy kind (or a
+    // later player/enemy buff system) can set the same field.
     husk: { name: 'Husk', hp: 8, power: 2, senseReq: 2 },
+    // Base `husk` stays as-is and unused by any region — kept in case it's
+    // reused later. ironhusk/wardhusk below are the two variants that
+    // actually populate "Clear the Road": each is immune to ONE attack
+    // kind, so the quest can never be stalled by using "the wrong" method
+    // on both of its only two targets — the other method always works on
+    // the other husk.
+    ironhusk: { name: 'Ironhusk', hp: 8, power: 2, senseReq: 2, immune: 'melee' },
+    wardhusk: { name: 'Wardhusk', hp: 8, power: 2, senseReq: 2, immune: 'aura' },
     stalker: { name: 'Stalker', hp: 12, power: 3, senseReq: 3 },
     ravager: { name: 'Ravager', hp: 34, power: 4, senseReq: 3 },
   },
@@ -53,7 +65,10 @@ export const CONTENT = {
       npcs: {
         warden: {
           x: 6, y: 5, name: 'Warden Oren', offers: 'clear-the-road',
-          dialog: ['The road east is crawling with husks.', 'Stay sharp out there.'],
+          dialog: [
+            'The road east is crawling with husks — some armored, some warded.',
+            'Iron shrugs off steel; wards scatter aura. Bring both, or bring nothing.',
+          ],
         },
         keeper: {
           x: 4, y: 8, name: 'Shop Keeper', shop: ['tonic'],
@@ -61,8 +76,8 @@ export const CONTENT = {
         },
       },
       enemies: {
-        husk1: { kind: 'husk', x: 12, y: 6 },
-        husk2: { kind: 'husk', x: 14, y: 9 },
+        husk1: { kind: 'ironhusk', x: 12, y: 6 },
+        husk2: { kind: 'wardhusk', x: 14, y: 9 },
         stalker1: { kind: 'stalker', x: 20, y: 4 },
       },
       destructibles: {
@@ -98,15 +113,13 @@ export const CONTENT = {
       capsule: 'A training capsule glints to the north. Take it.',
       crate: 'Break the old supply crate. Old habits, free coins.',
       melee: 'A husk blocks the road. Strike it down up close.',
-      // Deliberately NOT "blast a husk": this teaching step only wants one
-      // aura hit landed on ANY foe (arcObserve in reduce.js keys off the
-      // attack kind, never the target's kind). Naming a husk here reads as
-      // if the Warden's "Defeat 2 husks" kill count needs an aura kill
-      // specifically — it never has. questProgress keys kill progress off
-      // the enemy's OWN kind, so melee, aura, or ally strikes all count
-      // identically. Keep this wording general so it can't be misread as a
-      // quest requirement again.
-      aura: 'Charge your aura, then loose a blast at any foe from range.',
+      // This teaching step only wants one aura hit landed on ANY foe
+      // (arcObserve in reduce.js keys off the attack kind, never the
+      // target's kind or its immunity) — it is unrelated to the Warden's
+      // kill objectives. Naming a husk is fine to say here now, though:
+      // ironhusk really IS immune to melee, so "one shrugs off fists" is
+      // true, useful, in-fiction guidance instead of an implied quest rule.
+      aura: 'One shrugs off fists — charge your aura and blast it from range.',
       tonic: 'Trade at the shop — a tonic may save your life.',
       pass: 'Scout the eastern pass.',
       boss: 'Something is coming. Stand with the Warden.',
@@ -136,8 +149,15 @@ export const CONTENT = {
     'clear-the-road': {
       name: 'Clear the Road',
       giver: 'warden',
+      // Two SEPARATE kill objectives, one per specific kind, instead of one
+      // "2 husks of any kind" counter — each of husk1/husk2 is immune to
+      // one attack method, so the quest tracker/offer modal now shows two
+      // distinct lines ("Defeat 1 Ironhusk" / "Defeat 1 Wardhusk") instead
+      // of one generic count, and there is no way to satisfy one kind's
+      // objective with a kill that belonged to the other.
       objectives: [
-        { type: 'kill', target: 'husk', n: 2 },
+        { type: 'kill', target: 'ironhusk', n: 1 },
+        { type: 'kill', target: 'wardhusk', n: 1 },
         { type: 'collect', item: 'training-capsule' },
         { type: 'reach', zone: 'east-pass' },
       ],

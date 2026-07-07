@@ -18,7 +18,6 @@ const MELEE_RANGE = 1;   // Chebyshev tiles
 const BLAST_RANGE = 3;
 const BLAST_COST = 3;
 const XP_PER_LEVEL = 5;  // lvl N -> N+1 costs N*XP_PER_LEVEL
-const RESPAWN_DELAY_TICKS = 10; // ~5s at TICK_MS=500 — a beat, not instant
 
 // Charge is press-and-hold, not tap-spam: the presentation dispatches one
 // CHARGE per fixed real-time tick while the button stays down (start:true on
@@ -32,7 +31,6 @@ const CHARGE_TOP_PCT = 80;   // aura % at/above which charging is throttled
 export function reduce(state, command) {
   const events = reduceCore(state, command);
   arcObserve(state, events);
-  questRespawnObserve(state, events);
   return events;
 }
 
@@ -85,14 +83,7 @@ function reduceCore(state, command) {
       if (!state.quests.offered[q]) throw new Error(`ACCEPT_QUEST: ${q} not offered`);
       const def = state.quests.defs[q];
       delete state.quests.offered[q];
-      // respawnAt is parallel to progress/objectives (0 = no respawn
-      // pending) — see questRespawnObserve below, the kill-objective safety
-      // net that keeps a quest from stalling if its unlocked targets are
-      // all dead before the objective is satisfied.
-      state.quests.active[q] = {
-        progress: def.objectives.map(() => 0),
-        respawnAt: def.objectives.map(() => 0),
-      };
+      state.quests.active[q] = { progress: def.objectives.map(() => 0) };
       const events = [{ type: 'quest_accepted', quest: q }];
       // Unlock entities on accept — never before. Nothing this quest needs
       // existed until now, so completion never depends on prior actions.
@@ -135,6 +126,9 @@ function reduceCore(state, command) {
       const e = livingEnemy(state, command.enemyId, 'MELEE');
       if (typeof e === 'object' && e.type) return [e];
       if (dist(state.player, e) > MELEE_RANGE) return [{ type: 'too_far', target: command.enemyId }];
+      // Immunity is a distinct, visible refusal (like too_far/no_aura) —
+      // never a silent no-op. No XP either: nothing was accomplished.
+      if (e.immune === 'melee') return [{ type: 'no_effect', target: command.enemyId, kind: 'melee' }];
       const dmg = state.player.skills.melee.lvl + 1 + nextInt(state.rng, 4);
       const events = hitEnemy(state, command.enemyId, e, dmg, 'melee');
       gainXp(state, events, 'melee');
@@ -168,6 +162,10 @@ function reduceCore(state, command) {
       if (dist(state.player, e) > BLAST_RANGE) return [{ type: 'too_far', target: command.enemyId }];
       if (state.player.aura < BLAST_COST) return [{ type: 'no_aura', need: BLAST_COST }];
       state.player.aura -= BLAST_COST;
+      // The blast still fires and still costs aura — it just does nothing
+      // against a warded hide. A clear, distinct event either way (never a
+      // silent no-op), matching the MELEE case above.
+      if (e.immune === 'aura') return [{ type: 'no_effect', target: command.enemyId, kind: 'aura' }];
       const dmg = state.player.skills.aura.lvl + 2 + nextInt(state.rng, 6);
       const events = hitEnemy(state, command.enemyId, e, dmg, 'aura');
       gainXp(state, events, 'aura');
@@ -320,6 +318,7 @@ function arcObserve(state, events) {
       state.enemies[b.id] = {
         x: b.x, y: b.y, kind: b.kind,
         hp: b.hp, maxHp: b.hp, power: b.power, alive: 1,
+        immune: b.immune || '',
       };
       state.npcs.warden.x = b.x - 1;
       state.npcs.warden.y = b.y - 1;
@@ -336,49 +335,6 @@ function arcObserve(state, events) {
       arc.mentorDown = 1;
       events.push({ type: 'mentor_fallen' });
     }
-  }
-}
-
-// Safety net for `kill` objectives: a quest's unlocked enemies are a FIXED
-// batch (ACCEPT_QUEST spawns them once, nothing else respawns them), so a
-// player who kills all of them by any method other than the one that
-// finishes the objective would otherwise stall the quest forever with no
-// targets left. While a quest is active, its kill objective isn't yet
-// satisfied, and every enemy the quest unlocked of that objective's target
-// kind is dead, a fresh copy of the template reappears after a short delay
-// (state.tick-gated, like arc.moveCount/isNight — no wall-clock, no RNG).
-// Scoped narrowly: only touches `kill` objectives' own unlocked entities,
-// never the boss, the arc's teaching steps, or collect/reach objectives.
-// Stops the moment the objective is satisfied.
-function questRespawnObserve(state, events) {
-  for (const qId of Object.keys(state.quests.active)) {
-    const def = state.quests.defs[qId];
-    const st = state.quests.active[qId];
-    // Saves made before this safety net existed (same WORLD_VERSION, quest
-    // already active) won't have respawnAt — backfill it rather than bump
-    // the save schema over a purely additive, zero-initialized field.
-    if (!st.respawnAt) st.respawnAt = def.objectives.map(() => 0);
-    const unlocked = def.unlocks && def.unlocks.enemies;
-    if (!unlocked) continue;
-    const ids = Object.keys(unlocked);
-    if (!ids.length) continue;
-
-    def.objectives.forEach((obj, i) => {
-      if (obj.type !== 'kill') return;
-      const need = obj.n || 1;
-      if (st.progress[i] >= need) { st.respawnAt[i] = 0; return; } // done — no more insurance needed
-      const targets = ids.filter((id) => unlocked[id].kind === obj.target);
-      if (!targets.length) return; // this quest's unlocks don't cover this kill objective
-      const anyAlive = targets.some((id) => state.enemies[id] && state.enemies[id].alive);
-      if (anyAlive) { st.respawnAt[i] = 0; return; } // still something to fight — no timer running
-      if (!st.respawnAt[i]) { st.respawnAt[i] = state.tick + RESPAWN_DELAY_TICKS; return; }
-      if (state.tick >= st.respawnAt[i]) {
-        const id = targets[0]; // reuse the first unlocked id's template & spot
-        state.enemies[id] = { ...unlocked[id] };
-        st.respawnAt[i] = 0;
-        events.push({ type: 'enemy_appeared', target: id, kind: unlocked[id].kind });
-      }
-    });
   }
 }
 

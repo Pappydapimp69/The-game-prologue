@@ -30,6 +30,9 @@ export function validateContent(c) {
     if (!isInt(k.hp) || k.hp <= 0) err(`enemyKind ${id}: bad hp`);
     if (!isInt(k.power) || k.power < 1) err(`enemyKind ${id}: bad power`);
     if (!isInt(k.senseReq) || k.senseReq < 1) err(`enemyKind ${id}: bad senseReq`);
+    if (k.immune !== undefined && k.immune !== 'melee' && k.immune !== 'aura') {
+      err(`enemyKind ${id}: bad immune ${k.immune} (must be 'melee' or 'aura' if present)`);
+    }
   }
   for (const [id, it] of Object.entries(c.items || {})) {
     if (it.price !== undefined && (!isInt(it.price) || it.price < 0)) err(`item ${id}: bad price`);
@@ -131,13 +134,11 @@ export function validateContent(c) {
   for (const [qid, q] of Object.entries(c.quests || {})) {
     for (const [i, o] of (q.objectives || []).entries()) {
       if (o.type === 'kill') {
-        // This stays a CONTENT-level invariant: enough of the target kind
-        // must be authored to satisfy `n` at all. reduce.js's
-        // questRespawnObserve is pure runtime insurance layered on top of
-        // whatever's authored here (it reuses these same unlock templates
-        // if every one dies before the objective is met) — it doesn't
-        // change what "enough" means at the data level, so this check is
-        // unchanged.
+        // Immunity (enemyKinds[k].immune) doesn't change what "enough"
+        // means here — it changes WHICH attack finishes a given kind off,
+        // not how many of that kind must exist. Each kill objective now
+        // targets a specific kind (e.g. `ironhusk`), so this still just
+        // confirms enough of THAT kind are authored to satisfy `n`.
         let count = 0;
         for (const r of Object.values(c.regions || {})) {
           for (const e of Object.values(r.enemies || {})) if (e.kind === o.target) count++;

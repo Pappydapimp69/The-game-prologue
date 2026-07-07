@@ -36,7 +36,10 @@ export function makeWorld(seed, options = {}) {
   for (const [id, e] of Object.entries(regionDef.enemies)) {
     if (gatedEnemyIds.has(id)) continue;
     const kind = CONTENT.enemyKinds[e.kind];
-    enemies[id] = { x: e.x, y: e.y, kind: e.kind, hp: kind.hp, maxHp: kind.hp, power: kind.power, alive: 1 };
+    enemies[id] = {
+      x: e.x, y: e.y, kind: e.kind, hp: kind.hp, maxHp: kind.hp, power: kind.power, alive: 1,
+      immune: kind.immune || '', // '' = no immunity, same "no value" convention as arc.choice
+    };
   }
   const npcs = {};
   for (const [id, n] of Object.entries(regionDef.npcs)) {
@@ -67,7 +70,10 @@ export function makeWorld(seed, options = {}) {
       for (const id of q.unlocks.enemies || []) {
         const e = regionDef.enemies[id];
         const kind = CONTENT.enemyKinds[e.kind];
-        def.unlocks.enemies[id] = { x: e.x, y: e.y, kind: e.kind, hp: kind.hp, maxHp: kind.hp, power: kind.power, alive: 1 };
+        def.unlocks.enemies[id] = {
+          x: e.x, y: e.y, kind: e.kind, hp: kind.hp, maxHp: kind.hp, power: kind.power, alive: 1,
+          immune: kind.immune || '',
+        };
       }
       for (const id of q.unlocks.pickups || []) {
         const p = regionDef.pickups[id];
@@ -119,6 +125,7 @@ export function makeWorld(seed, options = {}) {
         ...regionDef.boss,
         hp: CONTENT.enemyKinds[regionDef.boss.kind].hp,
         power: CONTENT.enemyKinds[regionDef.boss.kind].power,
+        immune: CONTENT.enemyKinds[regionDef.boss.kind].immune || '',
       },
       bossSpawned: 0, mentorDown: 0, bossDefeated: 0,
       choice: '', // '', 'spare', 'finish'
