@@ -7,6 +7,7 @@
 import { makeWorld } from '../sim/world.js';
 import { reduce } from '../sim/reduce.js';
 import { CONTENT } from '../sim/content.js';
+import { exportSaga } from '../sim/saga.js';
 import { readonly } from './readonly.js';
 import { makeInput } from './input.js';
 import { render } from './renderer.js';
@@ -28,6 +29,13 @@ export function startGame(canvas, seed, options = {}) {
   const view = {
     px: world.player.x, py: world.player.y,
     toasts: [], modal: null, dodging: false, device: 'keyboard',
+    guide: '',
+  };
+  // The vale greets you once.
+  view.modal = {
+    kind: 'dialog', title: 'PROLOGUE',
+    lines: CONTENT.arc.intro,
+    buttons: [{ id: 'confirm', label: 'Begin (Enter)' }],
   };
   let nextMoveAt = 0, nextTickAt = 0, dodgeUntil = 0;
   const enemyCd = {};
@@ -99,7 +107,19 @@ export function startGame(canvas, seed, options = {}) {
       case 'picked_up': toast(`Picked up ${e.item}`); break;
       case 'broke': toast(`Crate smashed — +${e.coins} coins`); break;
       case 'enemy_hit': toast(`Hit for ${e.dmg}`); break;
-      case 'enemy_defeated': toast(`${e.kind} defeated!`); break;
+      case 'enemy_defeated':
+        toast(`${e.kind} defeated!`);
+        if (e.target === world.arc.bossDef.id) {
+          view.modal = {
+            kind: 'fate', title: 'It kneels, beaten',
+            lines: ['The Ravager is finished either way.', 'What are you?'],
+            buttons: [
+              { id: 'confirm', label: 'Spare it (Enter)' },
+              { id: 'alt', label: 'Finish it (K)' },
+            ],
+          };
+        }
+        break;
       case 'player_hit': toast(`Took ${e.dmg} damage`); break;
       case 'skill_up': toast(`${e.skill} rose to ${e.lvl}!`); break;
       case 'objective_progress': toast(`${e.quest}: ${e.at}/${e.of}`); break;
@@ -117,6 +137,35 @@ export function startGame(canvas, seed, options = {}) {
           buttons: [{ id: 'confirm', label: 'Rise Again (Enter)' }],
         };
         break;
+      case 'exit_locked': toast('The gate is sealed. You are not done here.'); break;
+      case 'boss_appeared':
+        view.modal = {
+          kind: 'dialog', title: 'The Ravager',
+          lines: CONTENT.arc.bossAppeared,
+          buttons: [{ id: 'confirm', label: 'Stand (Enter)' }],
+        };
+        break;
+      case 'mentor_fallen':
+        view.modal = {
+          kind: 'dialog', title: 'Oren falls',
+          lines: CONTENT.arc.mentorFallen,
+          buttons: [{ id: 'confirm', label: 'Alone (Enter)' }],
+        };
+        break;
+      case 'prologue_complete': {
+        const code = exportSaga(world);
+        view.modal = {
+          kind: 'finale', title: 'THE VALE FALLS BEHIND', code,
+          lines: [
+            ...CONTENT.arc.finale,
+            '',
+            CONTENT.arc.exportHint,
+            code,
+          ],
+          buttons: [{ id: 'confirm', label: 'Copy code (Enter)' }],
+        };
+        break;
+      }
     }
   }
 
@@ -138,14 +187,23 @@ export function startGame(canvas, seed, options = {}) {
       if (m.kind === 'offer') { dispatch({ type: 'ACCEPT_QUEST', questId: m.quest }); closeModal(); toast('Quest accepted'); }
       else if (m.kind === 'shop') { dispatch({ type: 'BUY', itemId: m.itemId }); }
       else if (m.kind === 'defeat') { world = makeWorld(seed, options); ro = readonly(world); closeModal(); toast('A new dawn'); }
+      else if (m.kind === 'fate') { dispatch({ type: 'CHOOSE_FATE', fate: 'spare' }); closeModal(); toast('You walk away. It watches you go.'); }
+      else if (m.kind === 'finale') {
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(m.code).catch(() => {});
+        toast('Code copied. See you in Part II.');
+      }
       else closeModal();
       return;
     }
     if (presses.alt || presses.blast) {
       if (m.kind === 'shop') dispatch({ type: 'USE_ITEM', itemId: m.itemId });
+      else if (m.kind === 'fate') { dispatch({ type: 'CHOOSE_FATE', fate: 'finish' }); closeModal(); toast('It ends here.'); }
       return;
     }
-    if (presses.cancel || presses.dodge) closeModal();
+    if (presses.cancel || presses.dodge) {
+      if (m.kind === 'fate' || m.kind === 'defeat') return; // the choice won't be dismissed
+      closeModal();
+    }
   }
 
   function handleWorld(now, move, presses) {
@@ -195,6 +253,16 @@ export function startGame(canvas, seed, options = {}) {
       }
     }
 
+    // Ally AI: while the mentor stands, he trades blows with the boss.
+    const bossId = world.arc.bossDef.id;
+    const boss = world.enemies[bossId];
+    if (boss && boss.alive && world.arc.bossSpawned && !world.arc.mentorDown) {
+      if (now >= (enemyCd.__ally || 0)) {
+        dispatch({ type: 'ALLY_STRIKE', enemyId: bossId });
+        enemyCd.__ally = now + 1200;
+      }
+    }
+
     if (now >= nextTickAt) {
       dispatch({ type: 'TICK' });
       nextTickAt = now + TICK_MS;
@@ -210,6 +278,18 @@ export function startGame(canvas, seed, options = {}) {
 
     if (view.modal) handleModal(presses);
     else handleWorld(now, move, presses);
+
+    // The guide line: the arc's next incomplete step, in order. One hint at
+    // a time — never a checklist dump.
+    const arc = world.arc;
+    const order = ['move', 'talk', 'quest', 'capsule', 'crate', 'melee', 'aura', 'tonic', 'pass'];
+    let guideKey = order.find((k) => !arc.steps[k]);
+    if (!guideKey) {
+      if (!arc.bossDefeated) guideKey = 'boss';
+      else if (!arc.complete) guideKey = 'choice';
+      else if (!world.flags.ended) guideKey = 'gate';
+    }
+    view.guide = world.flags.ended ? '' : (CONTENT.arc.guide[guideKey] || '');
 
     // Smooth display position — floats live here, never in the sim.
     const k = Math.min(1, dt * 0.02);

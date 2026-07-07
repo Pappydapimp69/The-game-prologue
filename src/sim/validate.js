@@ -67,6 +67,27 @@ export function validateContent(c) {
     if (!q.reward || !isInt(q.reward.coins) || q.reward.coins < 0) err(`quest ${qid}: bad reward`);
   }
 
+  // Opening arc: the boss must be spawnable and every arc step must have a
+  // guide line (a step with no guidance is a silent dead-end).
+  for (const [rid, r] of Object.entries(c.regions || {})) {
+    if (rid !== c.startRegion) continue;
+    if (!r.boss) { err(`region ${rid}: no boss for the opening arc`); continue; }
+    if (!c.enemyKinds?.[r.boss.kind]) err(`region ${rid}: boss kind ${r.boss.kind} unknown`);
+    if (r.enemies?.[r.boss.id]) err(`region ${rid}: boss id ${r.boss.id} collides with a normal enemy`);
+    const inB = (x, y) => isInt(x) && isInt(y) && x >= 0 && y >= 0 && x < r.w && y < r.h;
+    if (!inB(r.boss.x, r.boss.y)) err(`region ${rid}: boss out of bounds`);
+    if ((r.blocked || []).includes(`${r.boss.x},${r.boss.y}`)) err(`region ${rid}: boss on blocked tile`);
+    if (!r.zones?.['east-gate']) err(`region ${rid}: missing east-gate exit zone`);
+    if (!r.zones?.['east-pass']) err(`region ${rid}: missing east-pass zone`);
+  }
+  const ARC_STEPS = ['move', 'talk', 'quest', 'capsule', 'crate', 'melee', 'aura', 'tonic', 'pass', 'boss', 'choice', 'gate'];
+  for (const step of ARC_STEPS) {
+    if (!c.arc?.guide?.[step]) err(`arc: missing guide text for step ${step}`);
+  }
+  for (const block of ['intro', 'bossAppeared', 'mentorFallen', 'finale']) {
+    if (!Array.isArray(c.arc?.[block]) || !c.arc[block].length) err(`arc: missing ${block} text`);
+  }
+
   // --- rung 2: referential integrity ---------------------------------------
   if (c.archetypes && !c.archetypes[c.defaultArchetype]) err(`defaultArchetype ${c.defaultArchetype} does not exist`);
   if (c.regions && !c.regions[c.startRegion]) err(`startRegion ${c.startRegion} does not exist`);

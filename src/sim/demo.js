@@ -41,9 +41,34 @@ export function demoCommands() {
     { type: 'MELEE', enemyId: 'husk2' },
     // Walk east to the pass — the reach objective completes the quest.
     M(1, 0), M(1, 0), M(1, 0), M(1, 0),
-    // Spend the reward.
+    // Spend the reward. Buying the tonic is the last teaching step — the
+    // Ravager crests the pass the moment it's done.
     { type: 'BUY', itemId: 'tonic' },
     { type: 'USE_ITEM', itemId: 'tonic' },
+    // Phase 1: stand with the Warden. Ally strikes come from the driver.
+    { type: 'CHARGE' }, { type: 'CHARGE' },
+    M(1, 0), M(1, 0),
+    { type: 'ALLY_STRIKE', enemyId: 'ravager1' },
+    { type: 'MELEE', enemyId: 'ravager1' },
+    { type: 'ALLY_STRIKE', enemyId: 'ravager1' },
+    { type: 'MELEE', enemyId: 'ravager1' },
+    { type: 'ENEMY_STRIKE', enemyId: 'ravager1' },
+    { type: 'MELEE', enemyId: 'ravager1' },
+    { type: 'MELEE', enemyId: 'ravager1' },
+    // Phase 2 (mentor falls at half health): alone now.
+    { type: 'AURA_BLAST', enemyId: 'ravager1' },
+    { type: 'ENEMY_STRIKE', enemyId: 'ravager1' },
+    { type: 'CHARGE' }, { type: 'CHARGE' },
+    { type: 'AURA_BLAST', enemyId: 'ravager1' },
+    { type: 'MELEE', enemyId: 'ravager1' },
+    { type: 'MELEE', enemyId: 'ravager1' },
+    { type: 'MELEE', enemyId: 'ravager1' },
+    { type: 'MELEE', enemyId: 'ravager1' },
+    { type: 'MELEE', enemyId: 'ravager1' },
+    { type: 'MELEE', enemyId: 'ravager1' },
+    // The choice — then out the eastern gate.
+    { type: 'CHOOSE_FATE', fate: 'spare' },
+    M(1, -1), M(1, 0), M(1, 0),
     { type: 'TICK' }, { type: 'TICK' },
   ];
 }

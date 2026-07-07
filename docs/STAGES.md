@@ -89,13 +89,29 @@ Evidence:
 - Fixed en route: quest tracker rendered "find undefined" for reach
   objectives (label switch missing the new type).
 
-## Stage 4 — The Prologue arc
+## Stage 4 — The Prologue arc ✅ (closed 2026-07-07)
 
-Opening-arc state overlay observing real gameplay events, one verb at a time;
-region exit gated on arc completion; two-phase finale boss (with mentor, then
-alone); cliffhanger + transformation legend + versioned `saga.v1` export code.
-Success: headless completion of the full arc; export code round-trips a
-validator; tutorial objects mapped narrowly (never satisfy later quests).
+Scope: the opening arc as a sim-state overlay that OBSERVES gameplay events
+(9 teaching steps: move/talk/quest/capsule/crate/melee/aura/tonic/pass, each
+mapped narrowly — the training crate completes `crate`, nothing else); the
+Ravager boss spawns only when every step is done; two-phase fight (ALLY_STRIKE
+mentor commands in phase 1; at half health the mentor falls and they refuse);
+the one real choice (spare/finish — CHOOSE_FATE, undismissable); the eastern
+gate as authoritative exit (sealed until arc complete); finale with the
+Firstborn transformation legend (survivorship-bias seed for the saga) and the
+`saga.v1` export code (SAGA1.<base64 canonical JSON>.<fnv1a32>). One-line
+guide hint at a time; story text lives in content, mechanics in the sim.
+
+Evidence:
+- `npm run smoke`: 35/35. Golden updated once: `dd14f521`.
+- Headless full-arc completion: taught, fought, chose, left — all flags
+  asserted; gate refuses early exit; boss won't pre-spawn with a step
+  missing; fallen mentor's strikes refuse; invalid fates throw.
+- Export code round-trips (archetype/skills/choice survive); tampered,
+  truncated, garbage, and wrong-version codes politely refused.
+- Browser e2e: full arc driven through the live dispatch seam, finale modal
+  up with a well-formed code; screenshot captured. Stage 2 e2e green.
+- Fixed en route: modal text/button overlap on long payload lines.
 
 ## Stage 5 — Feel + ship
 

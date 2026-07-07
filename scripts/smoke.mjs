@@ -15,10 +15,11 @@ import { readonly } from '../src/app/readonly.js';
 import { CONTENT } from '../src/sim/content.js';
 import { validateContent } from '../src/sim/validate.js';
 import { canSense } from '../src/sim/info.js';
+import { exportSaga, importSaga } from '../src/sim/saga.js';
 
 // Baked golden value for the demo playthrough. An INTENDED sim/content change
 // updates this one line (review the diff); an unintended divergence is a bug.
-const GOLDEN_DEMO_FINGERPRINT = '201c297b';
+const GOLDEN_DEMO_FINGERPRINT = 'dd14f521';
 
 const failures = [];
 let count = 0;
@@ -260,6 +261,94 @@ test('reach objective progresses on entering the zone', () => {
   w.player.x = 17; w.player.y = 8; // one step west of the zone edge (r=2 around 20,8)
   const ev = replay(w, [{ type: 'MOVE', dx: 1, dy: 0 }]);
   assert(ev.some((e) => e.type === 'objective_progress' && e.objective === 2), 'reach did not progress');
+});
+
+console.log('# stage 4: the prologue arc');
+
+test('headless full-arc completion: taught, fought, chose, left', () => {
+  const w = runDemo();
+  const s = w.arc.steps;
+  for (const k of Object.keys(s)) assert(s[k] === 1, `arc step ${k} incomplete`);
+  assert(w.arc.bossSpawned === 1, 'boss never appeared');
+  assert(w.arc.mentorDown === 1, 'mentor never fell (phase 2 missing)');
+  assert(w.arc.bossDefeated === 1, 'boss not defeated');
+  assertEqual(w.arc.choice, 'spare', 'choice not recorded');
+  assert(w.arc.complete === 1, 'arc not complete');
+  assert(w.flags.ended === 1, 'prologue did not end at the gate');
+});
+
+test('the gate is sealed until the arc completes', () => {
+  const w = makeWorld(3);
+  w.player.x = 22; w.player.y = 8;
+  const ev = replay(w, [{ type: 'MOVE', dx: 1, dy: 0 }]);
+  assert(ev.some((e) => e.type === 'exit_locked'), 'gate let an unfinished player out');
+  assert(!w.flags.ended, 'prologue ended early');
+});
+
+test('boss only spawns when every teaching step is done', () => {
+  const w = makeWorld(3);
+  assert(!w.enemies.ravager1, 'boss pre-spawned');
+  // Complete all steps but tonic; boss must not appear.
+  const s = w.arc.steps;
+  for (const k of Object.keys(s)) if (k !== 'tonic') s[k] = 1;
+  replay(w, [{ type: 'TICK' }]);
+  assert(!w.enemies.ravager1, 'boss spawned with a step missing');
+  w.player.coins = 5;
+  replay(w, [{ type: 'BUY', itemId: 'tonic' }]);
+  assert(w.enemies.ravager1?.alive === 1, 'boss did not spawn after final step');
+});
+
+test('mentor strikes work in phase 1 and refuse after he falls', () => {
+  const w = makeWorld(3);
+  for (const k of Object.keys(w.arc.steps)) w.arc.steps[k] = 1;
+  replay(w, [{ type: 'TICK' }]); // spawn boss
+  const ev1 = replay(w, [{ type: 'ALLY_STRIKE', enemyId: 'ravager1' }]);
+  assert(ev1.some((e) => e.type === 'enemy_hit' && e.kind === 'ally'), 'ally strike failed in phase 1');
+  w.enemies.ravager1.hp = Math.floor(w.enemies.ravager1.maxHp / 2);
+  replay(w, [{ type: 'TICK' }]); // arc notices phase 2
+  assert(w.arc.mentorDown === 1, 'phase 2 did not trigger');
+  const ev2 = replay(w, [{ type: 'ALLY_STRIKE', enemyId: 'ravager1' }]);
+  assert(ev2.some((e) => e.type === 'not_now'), 'fallen mentor still striking');
+});
+
+test('choice requires a beaten boss and locks in once', () => {
+  const w = makeWorld(3);
+  const ev = replay(w, [{ type: 'CHOOSE_FATE', fate: 'spare' }]);
+  assert(ev.some((e) => e.type === 'not_now'), 'chose fate with no boss down');
+  let threw = false;
+  w.arc.bossDefeated = 1;
+  try { replay(w, [{ type: 'CHOOSE_FATE', fate: 'befriend' }]); } catch { threw = true; }
+  assert(threw, 'invalid fate accepted');
+});
+
+console.log('# stage 4: saga export code');
+
+test('export round-trips: archetype, skills, and the choice survive', () => {
+  const w = runDemo();
+  const code = exportSaga(w);
+  assert(code.startsWith('SAGA1.'), 'bad code prefix');
+  const r = importSaga(code);
+  assert(r.ok, `import failed: ${r.error}`);
+  assertEqual(r.data.archetype, w.settings.archetype);
+  assertEqual(r.data.choices.ravagerFate, 'spare');
+  assertEqual(r.data.skills.melee, w.player.skills.melee.lvl);
+});
+
+test('tampered, truncated, and wrong-version codes are refused politely', () => {
+  const w = runDemo();
+  const code = exportSaga(w);
+  const [p, payload, check] = code.split('.');
+  assert(!importSaga(`${p}.${payload}x.${check}`).ok, 'tampered payload accepted');
+  assert(!importSaga(`${p}.${payload}`).ok, 'truncated code accepted');
+  assert(!importSaga('GARBAGE').ok, 'garbage accepted');
+  assert(!importSaga(42).ok, 'non-string accepted');
+});
+
+test('export refuses before the prologue ends', () => {
+  const w = makeWorld(3);
+  let threw = false;
+  try { exportSaga(w); } catch { threw = true; }
+  assert(threw, 'exported an unfinished game');
 });
 
 console.log('# renderer boundary');

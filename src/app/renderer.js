@@ -61,6 +61,12 @@ export function render(ctx, w, view) {
   for (const id of Object.keys(w.npcs)) {
     const n = w.npcs[id];
     const [x, y] = tile(n.x, n.y);
+    if (id === 'warden' && w.arc.mentorDown) {
+      // Fallen: flat and dim, but present — he survives to speak the legend.
+      ctx.fillStyle = COLORS.dead;
+      ctx.fillRect(x + 2, y + TILE - 9, TILE - 4, 6);
+      continue;
+    }
     ctx.fillStyle = COLORS.npc;
     ctx.fillRect(x + 4, y + 3, TILE - 8, TILE - 6);
     ctx.fillStyle = COLORS.dim;
@@ -71,8 +77,9 @@ export function render(ctx, w, view) {
   for (const id of Object.keys(w.enemies)) {
     const e = w.enemies[id];
     const [x, y] = tile(e.x, e.y);
+    const big = id === w.arc.bossDef.id ? 4 : 0; // the Ravager looms
     ctx.fillStyle = e.alive ? COLORS.enemy : COLORS.dead;
-    ctx.fillRect(x + 4, y + 4, TILE - 8, TILE - 8);
+    ctx.fillRect(x + 4 - big, y + 4 - big, TILE - 8 + big * 2, TILE - 8 + big * 2);
     if (e.alive) {
       // Skill-gated information: exact readout only if perception clears the
       // kind's senseReq — otherwise the world just shows "???".
@@ -139,6 +146,30 @@ export function render(ctx, w, view) {
     ctx.textAlign = 'left';
   }
 
+  // Arc guide — one hint, top center.
+  if (view.guide) {
+    ctx.fillStyle = COLORS.pickup;
+    ctx.font = 'italic 12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(view.guide, canvas.width / 2, 14);
+    ctx.textAlign = 'left';
+  }
+
+  // The eastern gate — sealed until the arc completes.
+  const gate = w.region.zones['east-gate'];
+  if (gate) {
+    const [gx, gy] = tile(gate.x, gate.y);
+    ctx.strokeStyle = w.arc.complete ? COLORS.good : COLORS.dim;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(gx + 2, gy - TILE + 2, TILE - 4, TILE * 3 - 4);
+    ctx.lineWidth = 1;
+    ctx.fillStyle = w.arc.complete ? COLORS.good : COLORS.dim;
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(w.arc.complete ? 'OPEN' : 'SEALED', gx + TILE / 2, gy + TILE * 2 + 6);
+    ctx.textAlign = 'left';
+  }
+
   // Toasts
   ctx.font = '11px system-ui, sans-serif';
   view.toasts.forEach((t, i) => {
@@ -189,16 +220,27 @@ export function render(ctx, w, view) {
     ctx.fillStyle = COLORS.text;
     ctx.textAlign = 'center';
     ctx.font = 'bold 16px system-ui, sans-serif';
-    ctx.fillText(view.modal.title, canvas.width / 2, 130);
-    ctx.font = '13px system-ui, sans-serif';
-    ctx.fillStyle = COLORS.dim;
-    view.modal.lines.forEach((line, i) => {
-      ctx.fillText(line, canvas.width / 2, 158 + i * 18);
-    });
+    const lines = view.modal.lines;
+    const startY = Math.max(60, canvas.height / 2 - (lines.length * 18 + 70) / 2);
+    ctx.fillText(view.modal.title, canvas.width / 2, startY);
+    let ly = startY + 28;
+    for (const line of lines) {
+      // Long payloads (the saga code) get a small mono face and stay inside
+      // the canvas; prose gets the normal face.
+      if (line.length > 60) {
+        ctx.font = '10px ui-monospace, monospace';
+        ctx.fillStyle = COLORS.good;
+      } else {
+        ctx.font = '13px system-ui, sans-serif';
+        ctx.fillStyle = COLORS.dim;
+      }
+      ctx.fillText(line, canvas.width / 2, ly, canvas.width - 40);
+      ly += 18;
+    }
     view.modal.buttons.forEach((b, i) => {
-      const bw = 150, bh = 30;
+      const bw = 170, bh = 30;
       const x = canvas.width / 2 - bw / 2;
-      const y = 210 + i * 40;
+      const y = ly + 10 + i * 40;
       zones.push(touchBtn(ctx, { id: b.id, label: b.label, x, y, w: bw, h: bh }));
     });
     ctx.textAlign = 'left';

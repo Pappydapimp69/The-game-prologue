@@ -8,7 +8,7 @@
 import { makeRng } from './rng.js';
 import { CONTENT } from './content.js';
 
-export const WORLD_VERSION = 'stage3';
+export const WORLD_VERSION = 'stage4';
 
 export function makeWorld(seed, options = {}) {
   if (!Number.isInteger(seed)) throw new Error('makeWorld: seed must be an integer');
@@ -79,6 +79,25 @@ export function makeWorld(seed, options = {}) {
     pickups,
     items,
     quests: { defs: questDefs, offered: {}, active: {}, completed: {} },
+    // The opening arc: a state overlay that OBSERVES real gameplay events —
+    // never a separate tutorial mode. Steps map NARROWLY (the training crate
+    // completes `crate`, not any future destructible objective). The boss
+    // definition is copied in so the sim stays self-contained.
+    arc: {
+      steps: {
+        move: 0, talk: 0, quest: 0, capsule: 0, crate: 0,
+        melee: 0, aura: 0, tonic: 0, pass: 0,
+      },
+      moveCount: 0,
+      bossDef: {
+        ...regionDef.boss,
+        hp: CONTENT.enemyKinds[regionDef.boss.kind].hp,
+        power: CONTENT.enemyKinds[regionDef.boss.kind].power,
+      },
+      bossSpawned: 0, mentorDown: 0, bossDefeated: 0,
+      choice: '', // '', 'spare', 'finish'
+      complete: 0,
+    },
     flags: {},
   };
 }

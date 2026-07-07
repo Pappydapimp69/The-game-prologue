@@ -41,6 +41,7 @@ export const CONTENT = {
     // as an earned skill, not a gadget).
     husk: { name: 'Husk', hp: 8, power: 2, senseReq: 2 },
     stalker: { name: 'Stalker', hp: 12, power: 3, senseReq: 3 },
+    ravager: { name: 'Ravager', hp: 34, power: 4, senseReq: 3 },
   },
 
   regions: {
@@ -72,10 +73,56 @@ export const CONTENT = {
       },
       zones: {
         'east-pass': { x: 20, y: 8, r: 2 },
+        'east-gate': { x: 23, y: 8, r: 1 },
       },
+      // The finale boss does NOT exist at world start — the opening arc
+      // spawns it once every teaching step is done.
+      boss: { id: 'ravager1', kind: 'ravager', x: 21, y: 8 },
     },
   },
   startRegion: 'foothold-vale',
+
+  // The opening arc's TEXT lives here (presentation reads it); the arc's
+  // MECHANICS live in the sim (reduce.js) because the exit gate is
+  // authoritative. Steps are keyed; guide lines shown one at a time.
+  arc: {
+    intro: [
+      'Foothold Vale. The last quiet place.',
+      'You have trained here all your life. Warden Oren says you are not ready.',
+      'Prove otherwise.',
+    ],
+    guide: {
+      move: 'Find your feet — walk the vale (WASD / stick / pad).',
+      talk: 'Speak with Warden Oren.',
+      quest: 'Consider the Warden’s offer — or walk away. Your call.',
+      capsule: 'A training capsule glints to the north. Take it.',
+      crate: 'Break the old supply crate. Old habits, free coins.',
+      melee: 'A husk blocks the road. Strike it down up close.',
+      aura: 'Charge your aura, then blast a husk from range.',
+      tonic: 'Trade at the shop — a tonic may save your life.',
+      pass: 'Scout the eastern pass.',
+      boss: 'Something is coming. Stand with the Warden.',
+      choice: 'It kneels, beaten. Decide what you are.',
+      gate: 'The gate stands open. Leave the vale.',
+    },
+    bossAppeared: [
+      'The ground shakes. A Ravager crests the pass —',
+      'the thing the husks were running FROM.',
+      'Oren steps in front of you. "Together, then."',
+    ],
+    mentorFallen: [
+      'The Ravager’s blow sends Oren to the ground.',
+      '"Finish it," he coughs. "Alone. Like the Firstborn did."',
+    ],
+    finale: [
+      'Oren, propped against the gate, watches you go.',
+      '"The Firstborn burned bright enough to end a war alone.',
+      'Every one of them died before telling anyone HOW.',
+      'Whatever you just became out there... it has no teacher."',
+      'Beyond the vale, the sky is the wrong color.',
+    ],
+    exportHint: 'Keep this code — Part II will ask for it.',
+  },
 
   quests: {
     'clear-the-road': {

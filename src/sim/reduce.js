@@ -20,6 +20,12 @@ const CHARGE_GAIN = 2;
 const XP_PER_LEVEL = 5;  // lvl N -> N+1 costs N*XP_PER_LEVEL
 
 export function reduce(state, command) {
+  const events = reduceCore(state, command);
+  arcObserve(state, events);
+  return events;
+}
+
+function reduceCore(state, command) {
   switch (command.type) {
     case 'TICK': {
       state.tick += 1;
@@ -36,6 +42,17 @@ export function reduce(state, command) {
       state.player.y = ny;
       const events = [{ type: 'moved', x: nx, y: ny }];
       questProgress(state, events, 'reach', null);
+      // The eastern gate is the region's authoritative exit: locked until the
+      // opening arc is complete, the prologue's ending when it isn't.
+      const gate = state.region.zones['east-gate'];
+      if (gate && Math.max(Math.abs(nx - gate.x), Math.abs(ny - gate.y)) <= gate.r) {
+        if (state.arc.complete && !state.flags.ended) {
+          state.flags.ended = 1;
+          events.push({ type: 'prologue_complete' });
+        } else if (!state.arc.complete) {
+          events.push({ type: 'exit_locked' });
+        }
+      }
       return events;
     }
 
@@ -108,6 +125,28 @@ export function reduce(state, command) {
       const events = hitEnemy(state, command.enemyId, e, dmg, 'aura');
       gainXp(state, events, 'aura');
       return events;
+    }
+
+    case 'ALLY_STRIKE': {
+      // The mentor fights beside you in the boss's first phase. Like enemy
+      // aggression, ally aggression is a command from the presentation's AI
+      // driver — and it stops the moment the mentor falls.
+      if (!state.arc.bossSpawned || state.arc.mentorDown) return [{ type: 'not_now' }];
+      const e = livingEnemy(state, command.enemyId, 'ALLY_STRIKE');
+      if (typeof e === 'object' && e.type) return [e];
+      const dmg = 3 + nextInt(state.rng, 3);
+      return hitEnemy(state, command.enemyId, e, dmg, 'ally');
+    }
+
+    case 'CHOOSE_FATE': {
+      // The prologue's one real choice — it travels into the saga export.
+      if (!state.arc.bossDefeated || state.arc.complete) return [{ type: 'not_now' }];
+      if (command.fate !== 'spare' && command.fate !== 'finish') {
+        throw new Error(`CHOOSE_FATE: bad fate ${command.fate}`);
+      }
+      state.arc.choice = command.fate;
+      state.arc.complete = 1;
+      return [{ type: 'arc_complete', choice: command.fate }];
     }
 
     case 'ENEMY_STRIKE': {
@@ -187,6 +226,66 @@ function gainXp(state, events, skillName) {
     s.xp = 0;
     s.lvl += 1;
     events.push({ type: 'skill_up', skill: skillName, lvl: s.lvl });
+  }
+}
+
+// The opening arc observes the events of every command — it never intercepts
+// them. Steps map NARROWLY: the training crate completes `crate`; a future
+// destructible objective won't. (Tutorial objects must not satisfy later
+// quests, and vice versa.)
+function arcObserve(state, events) {
+  const arc = state.arc;
+  if (!arc || state.flags.ended) return;
+  const s = arc.steps;
+
+  for (const e of events) {
+    switch (e.type) {
+      case 'moved': {
+        arc.moveCount += 1;
+        if (arc.moveCount >= 5) s.move = 1;
+        const z = state.region.zones['east-pass'];
+        if (z && Math.max(Math.abs(e.x - z.x), Math.abs(e.y - z.y)) <= z.r) s.pass = 1;
+        break;
+      }
+      case 'talked': if (e.npc === 'warden') s.talk = 1; break;
+      case 'quest_accepted': if (e.quest === 'clear-the-road') s.quest = 1; break;
+      case 'picked_up': if (e.item === 'training-capsule') s.capsule = 1; break;
+      case 'broke': if (e.target === 'crate1') s.crate = 1; break;
+      case 'enemy_hit':
+        if (e.kind === 'melee') s.melee = 1;
+        if (e.kind === 'aura') s.aura = 1;
+        break;
+      case 'bought': if (e.item === 'tonic') s.tonic = 1; break;
+      case 'enemy_defeated':
+        if (e.target === arc.bossDef.id) arc.bossDefeated = 1;
+        break;
+    }
+  }
+
+  // Every teaching step done → the finale begins: the boss crests the pass
+  // and the mentor moves to hold the line beside you.
+  if (!arc.bossSpawned && Object.values(s).every((v) => v === 1)) {
+    const b = arc.bossDef;
+    if (!state.enemies[b.id]) { // never respawn
+      state.enemies[b.id] = {
+        x: b.x, y: b.y, kind: b.kind,
+        hp: b.hp, maxHp: b.hp, power: b.power, alive: 1,
+      };
+      state.npcs.warden.x = b.x - 1;
+      state.npcs.warden.y = b.y - 1;
+      arc.bossSpawned = 1;
+      events.push({ type: 'boss_appeared', boss: b.id });
+    }
+  }
+
+  // Phase two: at half health the Ravager lashes out — the mentor falls, and
+  // the fight is yours alone.
+  if (arc.bossSpawned && !arc.mentorDown) {
+    const boss = state.enemies[arc.bossDef.id];
+    if (boss && boss.alive && boss.hp <= Math.floor(boss.maxHp / 2)) {
+      arc.mentorDown = 1;
+      events.push({ type: 'mentor_fallen' });
+    }
   }
 }
 
