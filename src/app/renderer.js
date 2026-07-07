@@ -1,0 +1,218 @@
+// Canvas renderer. Receives the world through the read-only proxy — it can
+// look at everything and touch nothing. Continuous cosmetic detail (smooth
+// sprite positions, toast fades) lives HERE, never in authoritative state.
+// Returns this frame's touch/click zones so input hit-tests what was drawn.
+
+export const TILE = 20;
+export const OX = 80, OY = 20; // world viewport offset inside the canvas
+
+const COLORS = {
+  bg: '#05070f', ground: '#101527', grid: '#141b33', wall: '#2b3350',
+  player: '#ffb74d', aura: '#7ec8ff', npc: '#6de0c2', enemy: '#e05a5a',
+  dead: '#3a3f52', crate: '#a1745b', pickup: '#ffd75e', text: '#cdd6f4',
+  dim: '#8892b0', hp: '#e05a5a', bar: '#1a2140', good: '#7CFC9A',
+};
+
+export function render(ctx, w, view) {
+  const { canvas } = ctx;
+  const zones = [];
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // --- region ---
+  ctx.fillStyle = COLORS.ground;
+  ctx.fillRect(OX, OY, w.region.w * TILE, w.region.h * TILE);
+  ctx.strokeStyle = COLORS.grid;
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= w.region.w; x++) {
+    ctx.beginPath(); ctx.moveTo(OX + x * TILE, OY); ctx.lineTo(OX + x * TILE, OY + w.region.h * TILE); ctx.stroke();
+  }
+  for (let y = 0; y <= w.region.h; y++) {
+    ctx.beginPath(); ctx.moveTo(OX, OY + y * TILE); ctx.lineTo(OX + w.region.w * TILE, OY + y * TILE); ctx.stroke();
+  }
+  for (const key of Object.keys(w.region.blocked)) {
+    const [x, y] = key.split(',').map(Number);
+    ctx.fillStyle = COLORS.wall;
+    ctx.fillRect(OX + x * TILE, OY + y * TILE, TILE, TILE);
+  }
+
+  const tile = (x, y) => [OX + x * TILE, OY + y * TILE];
+
+  // --- entities ---
+  for (const id of Object.keys(w.destructibles)) {
+    const d = w.destructibles[id];
+    const [x, y] = tile(d.x, d.y);
+    ctx.strokeStyle = COLORS.crate;
+    if (d.broken) { ctx.strokeRect(x + 5, y + 5, TILE - 10, TILE - 10); }
+    else { ctx.fillStyle = COLORS.crate; ctx.fillRect(x + 3, y + 3, TILE - 6, TILE - 6); }
+  }
+  for (const id of Object.keys(w.pickups)) {
+    const p = w.pickups[id];
+    if (p.taken) continue;
+    const [x, y] = tile(p.x, p.y);
+    ctx.fillStyle = COLORS.pickup;
+    ctx.beginPath();
+    ctx.moveTo(x + TILE / 2, y + 4); ctx.lineTo(x + TILE - 4, y + TILE / 2);
+    ctx.lineTo(x + TILE / 2, y + TILE - 4); ctx.lineTo(x + 4, y + TILE / 2);
+    ctx.closePath(); ctx.fill();
+  }
+  for (const id of Object.keys(w.npcs)) {
+    const n = w.npcs[id];
+    const [x, y] = tile(n.x, n.y);
+    ctx.fillStyle = COLORS.npc;
+    ctx.fillRect(x + 4, y + 3, TILE - 8, TILE - 6);
+    ctx.fillStyle = COLORS.dim;
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(n.name, x + TILE / 2, y - 3);
+  }
+  for (const id of Object.keys(w.enemies)) {
+    const e = w.enemies[id];
+    const [x, y] = tile(e.x, e.y);
+    ctx.fillStyle = e.alive ? COLORS.enemy : COLORS.dead;
+    ctx.fillRect(x + 4, y + 4, TILE - 8, TILE - 8);
+    if (e.alive) {
+      ctx.fillStyle = COLORS.bar;
+      ctx.fillRect(x + 2, y - 5, TILE - 4, 3);
+      ctx.fillStyle = COLORS.hp;
+      ctx.fillRect(x + 2, y - 5, (TILE - 4) * (e.hp / e.maxHp), 3);
+    }
+  }
+
+  // --- player (smooth display position, dodge flicker, aura ring) ---
+  const px = OX + view.px * TILE, py = OY + view.py * TILE;
+  if (w.player.aura > 0) {
+    ctx.strokeStyle = COLORS.aura;
+    ctx.globalAlpha = 0.25 + 0.5 * (w.player.aura / w.player.maxAura);
+    ctx.beginPath();
+    ctx.arc(px + TILE / 2, py + TILE / 2, TILE * 0.8, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  if (view.dodging) ctx.globalAlpha = 0.45;
+  ctx.fillStyle = COLORS.player;
+  ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
+  ctx.globalAlpha = 1;
+
+  // --- HUD ---
+  ctx.textAlign = 'left';
+  ctx.font = '12px system-ui, sans-serif';
+  bar(ctx, 10, 8, 130, 10, w.player.hp / w.player.maxHp, COLORS.hp, `HP ${w.player.hp}/${w.player.maxHp}`);
+  bar(ctx, 10, 24, 130, 10, w.player.aura / w.player.maxAura, COLORS.aura, `Aura ${w.player.aura}/${w.player.maxAura}`);
+  ctx.fillStyle = COLORS.pickup;
+  ctx.fillText(`⛁ ${w.player.coins}`, 150, 17);
+  ctx.fillStyle = COLORS.dim;
+  const sk = w.player.skills;
+  ctx.fillText(`Melee ${sk.melee.lvl} · Aura ${sk.aura.lvl}`, 150, 33);
+
+  // Quest tracker
+  const activeIds = Object.keys(w.quests.active).sort();
+  if (activeIds.length) {
+    ctx.textAlign = 'right';
+    ctx.fillStyle = COLORS.text;
+    let qy = 14;
+    for (const qId of activeIds) {
+      ctx.fillText(qId, canvas.width - 10, qy); qy += 14;
+      const def = w.quests.defs[qId];
+      const st = w.quests.active[qId];
+      ctx.fillStyle = COLORS.dim;
+      def.objectives.forEach((o, i) => {
+        const label = o.type === 'kill' ? `defeat ${o.target}` : `find ${o.item}`;
+        ctx.fillText(`${label} ${st.progress[i]}/${o.n || 1}`, canvas.width - 10, qy);
+        qy += 13;
+      });
+      ctx.fillStyle = COLORS.text;
+    }
+    ctx.textAlign = 'left';
+  }
+
+  // Toasts
+  ctx.font = '11px system-ui, sans-serif';
+  view.toasts.forEach((t, i) => {
+    ctx.globalAlpha = Math.max(0, Math.min(1, t.ttl / 600));
+    ctx.fillStyle = COLORS.good;
+    ctx.fillText(t.text, 10, canvas.height - 46 - i * 14);
+  });
+  ctx.globalAlpha = 1;
+
+  // Control legend in the ACTIVE device's own language — words, not glyphs.
+  ctx.fillStyle = COLORS.dim;
+  ctx.font = '11px system-ui, sans-serif';
+  const legends = {
+    keyboard: 'Move WASD/Arrows · Attack J · Blast K · Charge L · Interact E · Dodge Space',
+    gamepad: 'Move Stick/D-Pad · Attack A · Blast X · Charge Y · Interact RB · Dodge B',
+    touch: 'Use the on-screen pad and buttons',
+  };
+  ctx.fillText(legends[view.device] || legends.keyboard, 10, canvas.height - 8);
+
+  // --- touch controls (drawn only for touch) ---
+  if (view.device === 'touch') {
+    const dz = 34;
+    const cx = 58, cy = canvas.height - 64;
+    const dirs = [
+      { id: 'up', x: cx - dz / 2, y: cy - dz * 1.5, label: '▲' },
+      { id: 'down', x: cx - dz / 2, y: cy + dz / 2, label: '▼' },
+      { id: 'left', x: cx - dz * 1.5, y: cy - dz / 2, label: '◀' },
+      { id: 'right', x: cx + dz / 2, y: cy - dz / 2, label: '▶' },
+    ];
+    for (const d of dirs) zones.push(touchBtn(ctx, { ...d, w: dz, h: dz }));
+    const acts = [
+      { id: 'attack', label: 'ATK' }, { id: 'blast', label: 'BLAST' },
+      { id: 'charge', label: 'CHG' }, { id: 'interact', label: 'USE' },
+      { id: 'dodge', label: 'DODGE' },
+    ];
+    acts.forEach((a, i) => {
+      zones.push(touchBtn(ctx, {
+        ...a, w: 52, h: 30,
+        x: canvas.width - 62, y: canvas.height - 44 - i * 36,
+      }));
+    });
+  }
+
+  // --- modal (pauses the overworld; drawn last, gets its own zones) ---
+  if (view.modal) {
+    ctx.fillStyle = 'rgba(3,5,12,0.82)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = COLORS.text;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 16px system-ui, sans-serif';
+    ctx.fillText(view.modal.title, canvas.width / 2, 130);
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillStyle = COLORS.dim;
+    view.modal.lines.forEach((line, i) => {
+      ctx.fillText(line, canvas.width / 2, 158 + i * 18);
+    });
+    view.modal.buttons.forEach((b, i) => {
+      const bw = 150, bh = 30;
+      const x = canvas.width / 2 - bw / 2;
+      const y = 210 + i * 40;
+      zones.push(touchBtn(ctx, { id: b.id, label: b.label, x, y, w: bw, h: bh }));
+    });
+    ctx.textAlign = 'left';
+  }
+
+  return zones;
+}
+
+function bar(ctx, x, y, w, h, frac, color, label) {
+  ctx.fillStyle = COLORS.bar;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w * Math.max(0, Math.min(1, frac)), h);
+  ctx.fillStyle = COLORS.text;
+  ctx.font = '9px system-ui, sans-serif';
+  ctx.fillText(label, x + 3, y + h - 2);
+}
+
+function touchBtn(ctx, z) {
+  ctx.fillStyle = 'rgba(136,146,176,0.18)';
+  ctx.strokeStyle = 'rgba(136,146,176,0.6)';
+  ctx.fillRect(z.x, z.y, z.w, z.h);
+  ctx.strokeRect(z.x, z.y, z.w, z.h);
+  ctx.fillStyle = COLORS.text;
+  ctx.font = 'bold 12px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(z.label, z.x + z.w / 2, z.y + z.h / 2 + 4);
+  ctx.textAlign = 'left';
+  return z;
+}

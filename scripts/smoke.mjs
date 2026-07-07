@@ -11,6 +11,7 @@ import { makeRng, nextU32, nextInt } from '../src/sim/rng.js';
 import { makeWorld } from '../src/sim/world.js';
 import { replay } from '../src/sim/reduce.js';
 import { DEMO_SEED, demoCommands } from '../src/sim/demo.js';
+import { readonly } from '../src/app/readonly.js';
 
 // Baked golden value for the demo playthrough. An INTENDED sim/content change
 // updates this one line (review the diff); an unintended divergence is a bug.
@@ -188,6 +189,20 @@ test('out-of-range attacks refuse instead of hitting', () => {
   const ev = replay(w, [{ type: 'MELEE', enemyId: 'husk1' }]); // spawn is far away
   assert(ev.some(e => e.type === 'too_far'));
   assert(w.enemies.husk1.hp === w.enemies.husk1.maxHp);
+});
+
+console.log('# renderer boundary');
+
+test('read-only proxy throws on any write, at any depth', () => {
+  const w = makeWorld(1);
+  const ro = readonly(w);
+  assertEqual(ro.player.hp, w.player.hp, 'proxy must read through');
+  let threw = 0;
+  try { ro.player.hp = 0; } catch { threw++; }
+  try { ro.tick = 99; } catch { threw++; }
+  try { delete ro.player; } catch { threw++; }
+  assertEqual(threw, 3, 'a renderer write slipped through the boundary');
+  assertEqual(w.player.hp, 20, 'underlying state was mutated');
 });
 
 console.log('# determinism guard: forbidden tokens in src/sim');

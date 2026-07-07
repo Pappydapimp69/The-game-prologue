@@ -42,13 +42,28 @@ Evidence:
   need/cap, out-of-range refusal, no-invuln-flag invariant.
 - Browser parity re-verified in Chromium: `a3152602` matches Node.
 
-## Stage 2 — Render + input
+## Stage 2 — Render + input ✅ (closed 2026-07-07)
 
-Canvas renderer (reads state, never writes — freeze or lint the boundary);
-8-direction movement; unified command vocabulary across keyboard/touch/gamepad
-(poll getGamepads() every frame); device-adaptive labels in words; modals pause
-the overworld but never any live embedded surface.
-Success: parity page still matches; manual play on desktop + touch.
+Scope: canvas renderer behind a recursive read-only Proxy (a renderer write
+throws — enforced mechanically, tested live in Chromium); 8-direction tile
+movement with hold-repeat and smooth display interpolation (floats live in
+presentation only); unified intent vocabulary across keyboard / touch
+(on-screen d-pad + word-labeled buttons) / gamepad (polled every frame);
+device-adaptive control legend; modal system (dialog, quest offer, shop,
+defeat) that pauses the overworld but never the loop, all dismissals through
+one path; enemy AI as ENEMY_STRIKE commands with per-enemy cooldown; dodge
+window = withholding strikes; frame delta capped.
+
+Evidence:
+- `npm run smoke`: 21/21 (new: read-only boundary test).
+- Chromium e2e: booted, quest accepted through the modal, held-key movement,
+  charge meter, live boundary rejection, on-screen d-pad movement on an
+  emulated Pixel 5 — all passing; desktop + touch screenshots captured.
+- Sim untouched: golden `a3152602` and Node/browser parity unchanged.
+- Real bug found & fixed: input edges were SAMPLED at frame time, so a press
+  shorter than one frame (fast taps, automated input) was silently lost —
+  presses are now CAPTURED at event time into a pending queue that the next
+  frame consumes. Filed to Brain.
 
 ## Stage 3 — Content systems, data-driven
 
