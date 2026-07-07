@@ -138,6 +138,14 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
         hitStop(e.kind === 'aura' ? 70 : 45);
         shake(Math.min(6, 2 + e.dmg * 0.6), 120);
         break;
+      case 'no_effect':
+        // Distinct from enemy_hit: the attack landed but the target is
+        // immune to this attack kind (e.g. an aura-warded husk shrugging
+        // off a blast) — a clear refusal, not a silent no-op, but lighter
+        // than a real hit (no hitstop/shake).
+        toast('No effect — try a different approach.');
+        punch(e.target);
+        break;
       case 'enemy_defeated':
         toast(`${e.kind} defeated!`);
         hitStop(90);

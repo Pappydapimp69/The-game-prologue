@@ -126,6 +126,9 @@ function reduceCore(state, command) {
       const e = livingEnemy(state, command.enemyId, 'MELEE');
       if (typeof e === 'object' && e.type) return [e];
       if (dist(state.player, e) > MELEE_RANGE) return [{ type: 'too_far', target: command.enemyId }];
+      // Immunity is a distinct, visible refusal (like too_far/no_aura) —
+      // never a silent no-op. No XP either: nothing was accomplished.
+      if (e.immune === 'melee') return [{ type: 'no_effect', target: command.enemyId, kind: 'melee' }];
       const dmg = state.player.skills.melee.lvl + 1 + nextInt(state.rng, 4);
       const events = hitEnemy(state, command.enemyId, e, dmg, 'melee');
       gainXp(state, events, 'melee');
@@ -159,6 +162,10 @@ function reduceCore(state, command) {
       if (dist(state.player, e) > BLAST_RANGE) return [{ type: 'too_far', target: command.enemyId }];
       if (state.player.aura < BLAST_COST) return [{ type: 'no_aura', need: BLAST_COST }];
       state.player.aura -= BLAST_COST;
+      // The blast still fires and still costs aura — it just does nothing
+      // against a warded hide. A clear, distinct event either way (never a
+      // silent no-op), matching the MELEE case above.
+      if (e.immune === 'aura') return [{ type: 'no_effect', target: command.enemyId, kind: 'aura' }];
       const dmg = state.player.skills.aura.lvl + 2 + nextInt(state.rng, 6);
       const events = hitEnemy(state, command.enemyId, e, dmg, 'aura');
       gainXp(state, events, 'aura');
@@ -311,6 +318,7 @@ function arcObserve(state, events) {
       state.enemies[b.id] = {
         x: b.x, y: b.y, kind: b.kind,
         hp: b.hp, maxHp: b.hp, power: b.power, alive: 1,
+        immune: b.immune || '',
       };
       state.npcs.warden.x = b.x - 1;
       state.npcs.warden.y = b.y - 1;
