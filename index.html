@@ -11,6 +11,10 @@
 </head>
 <body>
   <canvas id="game" width="640" height="360"></canvas>
-  <script type="module" src="src/main.js"></script>
+  <!-- Cache-buster: bump this string by hand whenever a deploy needs to be
+       visible immediately (fixes/behavior changes) rather than trusting the
+       CDN/browser cache to expire on its own. No build step in this repo, so
+       this is a manual date+counter token, not a computed commit SHA. -->
+  <script type="module" src="src/main.js?v=20260707-1"></script>
 </body>
 </html>
