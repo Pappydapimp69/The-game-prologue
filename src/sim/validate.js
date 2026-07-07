@@ -108,11 +108,22 @@ export function validateContent(c) {
       if (!c.items?.[p.item]) err(`pickup ${id}: unknown item ${p.item}`);
     }
   }
+  const allEnemyIds = new Set(), allPickupIds = new Set();
+  for (const r of Object.values(c.regions || {})) {
+    for (const id of Object.keys(r.enemies || {})) allEnemyIds.add(id);
+    for (const id of Object.keys(r.pickups || {})) allPickupIds.add(id);
+  }
   for (const [qid, q] of Object.entries(c.quests || {})) {
     if (!allNpcs[q.giver]) err(`quest ${qid}: giver ${q.giver} does not exist`);
     if (q.giver && allNpcs[q.giver] && allNpcs[q.giver].offers !== qid) {
       // Not fatal, but a quest nobody offers is unreachable.
       err(`quest ${qid}: no npc offers it (giver ${q.giver} offers ${allNpcs[q.giver].offers})`);
+    }
+    for (const id of q.unlocks?.enemies || []) {
+      if (!allEnemyIds.has(id)) err(`quest ${qid}: unlocks unknown enemy ${id}`);
+    }
+    for (const id of q.unlocks?.pickups || []) {
+      if (!allPickupIds.has(id)) err(`quest ${qid}: unlocks unknown pickup ${id}`);
     }
   }
 

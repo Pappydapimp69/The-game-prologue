@@ -126,6 +126,8 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
         };
         break;
       }
+      case 'enemy_appeared': toast(`A ${e.kind} emerges onto the road.`); break;
+      case 'pickup_appeared': toast(`Something glints nearby.`); break;
       case 'picked_up': toast(`Picked up ${e.item}`); break;
       case 'broke': toast(`Crate smashed — +${e.coins} coins`); punch(e.target); shake(2, 90); break;
       case 'enemy_hit':

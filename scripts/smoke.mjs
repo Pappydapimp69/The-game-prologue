@@ -20,7 +20,7 @@ import { isNight, DAY_CYCLE_TICKS } from '../src/sim/daynight.js';
 
 // Baked golden value for the demo playthrough. An INTENDED sim/content change
 // updates this one line (review the diff); an unintended divergence is a bug.
-const GOLDEN_DEMO_FINGERPRINT = 'dd14f521';
+const GOLDEN_DEMO_FINGERPRINT = 'c4b031a8';
 
 const failures = [];
 let count = 0;
@@ -164,6 +164,27 @@ test('quests are offered, never pushed', () => {
   assert(!w.quests.active['clear-the-road'], 'quest auto-activated — must require ACCEPT_QUEST');
 });
 
+test('quest-gated entities do not exist before acceptance — objectives are agnostic of prior actions', () => {
+  const fresh = makeWorld(1);
+  assert(!fresh.enemies.husk1 && !fresh.enemies.husk2, 'husks pre-spawned before quest acceptance');
+  assert(!fresh.pickups.capsule1, 'capsule pre-spawned before quest acceptance');
+
+  const w = makeWorld(1);
+  let threw = false;
+  try { replay(w, [{ type: 'MELEE', enemyId: 'husk1' }]); } catch { threw = true; }
+  assert(threw, 'attacking a not-yet-unlocked enemy id should fail loud, not silently no-op');
+  threw = false;
+  try { replay(w, [{ type: 'INTERACT', pickupId: 'capsule1' }]); } catch { threw = true; }
+  assert(threw, 'interacting with a not-yet-unlocked pickup id should fail loud');
+
+  const ev = replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  assert(ev.some((e) => e.type === 'enemy_appeared' && e.target === 'husk1'), 'husk1 did not appear on accept');
+  assert(ev.some((e) => e.type === 'enemy_appeared' && e.target === 'husk2'), 'husk2 did not appear on accept');
+  assert(ev.some((e) => e.type === 'pickup_appeared' && e.target === 'capsule1'), 'capsule1 did not appear on accept');
+  assert(w.enemies.husk1.alive === 1 && w.enemies.husk2.alive === 1, 'husks not alive after unlock');
+  assert(w.pickups.capsule1.taken === 0, 'capsule not fresh after unlock');
+});
+
 test('blocked tile stops movement', () => {
   const w = makeWorld(1);
   w.player.x = 9; w.player.y = 5;
@@ -173,13 +194,15 @@ test('blocked tile stops movement', () => {
 });
 
 test('aura blast needs charge; charge caps at max', () => {
+  // stalker1 is always-present (not quest-gated like husk1/husk2/capsule1,
+  // which don't exist until ACCEPT_QUEST) — fine for a mechanic-only test.
   const w = makeWorld(1);
-  w.player.x = 11; w.player.y = 6; // in range of husk1
-  const ev = replay(w, [{ type: 'AURA_BLAST', enemyId: 'husk1' }]);
+  w.player.x = 18; w.player.y = 4; // in range of stalker1 (20,4)
+  const ev = replay(w, [{ type: 'AURA_BLAST', enemyId: 'stalker1' }]);
   assert(ev.some(e => e.type === 'no_aura'), 'blast fired with empty meter');
   replay(w, Array.from({ length: 20 }, () => ({ type: 'CHARGE' })));
   assert(w.player.aura === w.player.maxAura, 'charge blew past max');
-  const ev2 = replay(w, [{ type: 'AURA_BLAST', enemyId: 'husk1' }]);
+  const ev2 = replay(w, [{ type: 'AURA_BLAST', enemyId: 'stalker1' }]);
   assert(ev2.some(e => e.type === 'enemy_hit'), 'charged blast did not hit');
 });
 
@@ -191,9 +214,9 @@ test('no invulnerability flag exists — i-frames are command-withholding', () =
 
 test('out-of-range attacks refuse instead of hitting', () => {
   const w = makeWorld(1);
-  const ev = replay(w, [{ type: 'MELEE', enemyId: 'husk1' }]); // spawn is far away
+  const ev = replay(w, [{ type: 'MELEE', enemyId: 'stalker1' }]); // spawn is far away
   assert(ev.some(e => e.type === 'too_far'));
-  assert(w.enemies.husk1.hp === w.enemies.husk1.maxHp);
+  assert(w.enemies.stalker1.hp === w.enemies.stalker1.maxHp);
 });
 
 console.log('# stage 3: content validation ladder');
@@ -220,6 +243,7 @@ test('a typo fails the build, not the player', () => {
     ['spawn on a blocked tile', (c) => { c.regions['foothold-vale'].enemies.husk1.x = 10; c.regions['foothold-vale'].enemies.husk1.y = 5; }],
     ['collect objective for unobtainable item', (c) => { delete c.regions['foothold-vale'].pickups.capsule1; }],
     ['zone out of bounds', (c) => { c.regions['foothold-vale'].zones['east-pass'].x = 99; }],
+    ['quest unlocks a nonexistent enemy id', (c) => { c.quests['clear-the-road'].unlocks.enemies.push('husk3'); }],
   ];
   for (const [name, fn] of cases) {
     assert(corrupt(fn).length > 0, `validator missed: ${name}`);
@@ -249,8 +273,8 @@ test('perception gates information (the earned scouter)', () => {
 test('difficulty is a sim setting: harsh hits +1 over gentle, same roll', () => {
   const hit = (difficulty) => {
     const w = makeWorld(99, { difficulty });
-    w.player.x = w.enemies.husk1.x - 1; w.player.y = w.enemies.husk1.y;
-    replay(w, [{ type: 'ENEMY_STRIKE', enemyId: 'husk1' }]);
+    w.player.x = w.enemies.stalker1.x - 1; w.player.y = w.enemies.stalker1.y;
+    replay(w, [{ type: 'ENEMY_STRIKE', enemyId: 'stalker1' }]);
     return w.player.maxHp - w.player.hp;
   };
   assertEqual(hit('harsh'), hit('gentle') + 1, 'harsh/gentle delta');
@@ -365,8 +389,8 @@ test('night stacks +1 enemy damage on top of difficulty, deterministically', () 
   const strike = (tick) => {
     const w = makeWorld(11);
     w.tick = tick;
-    w.player.x = w.enemies.husk1.x - 1; w.player.y = w.enemies.husk1.y;
-    replay(w, [{ type: 'ENEMY_STRIKE', enemyId: 'husk1' }]);
+    w.player.x = w.enemies.stalker1.x - 1; w.player.y = w.enemies.stalker1.y;
+    replay(w, [{ type: 'ENEMY_STRIKE', enemyId: 'stalker1' }]);
     return w.player.maxHp - w.player.hp;
   };
   assertEqual(strike(DAY_CYCLE_TICKS / 2), strike(0) + 1, 'night should add exactly +1 over day, same roll');

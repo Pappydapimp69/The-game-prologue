@@ -76,7 +76,20 @@ function reduceCore(state, command) {
       const def = state.quests.defs[q];
       delete state.quests.offered[q];
       state.quests.active[q] = { progress: def.objectives.map(() => 0) };
-      return [{ type: 'quest_accepted', quest: q }];
+      const events = [{ type: 'quest_accepted', quest: q }];
+      // Unlock entities on accept — never before. Nothing this quest needs
+      // existed until now, so completion never depends on prior actions.
+      if (def.unlocks) {
+        for (const [id, tmpl] of Object.entries(def.unlocks.enemies || {})) {
+          state.enemies[id] = { ...tmpl };
+          events.push({ type: 'enemy_appeared', target: id, kind: tmpl.kind });
+        }
+        for (const [id, tmpl] of Object.entries(def.unlocks.pickups || {})) {
+          state.pickups[id] = { ...tmpl };
+          events.push({ type: 'pickup_appeared', target: id, item: tmpl.item });
+        }
+      }
+      return events;
     }
 
     case 'INTERACT': {

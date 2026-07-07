@@ -134,6 +134,11 @@ export const CONTENT = {
         { type: 'reach', zone: 'east-pass' },
       ],
       reward: { coins: 10 },
+      // Objectives must be agnostic of anything the player did before
+      // accepting — these ids don't exist in the world at all until
+      // ACCEPT_QUEST spawns them, so there is no "already killed it" or
+      // "already picked it up" case to special-case.
+      unlocks: { enemies: ['husk1', 'husk2'], pickups: ['capsule1'] },
     },
   },
 };

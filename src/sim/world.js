@@ -25,8 +25,16 @@ export function makeWorld(seed, options = {}) {
     skills[s] = { lvl: arch.skills[s] || 1, xp: 0 };
   }
 
+  // Quest-gated entities don't exist in the world until their quest is
+  // accepted (ACCEPT_QUEST spawns them — see reduce.js) — this makes
+  // objectives agnostic of whatever the player did before accepting: there
+  // is no "already killed it" case because it didn't exist yet.
+  const gatedEnemyIds = new Set(Object.values(CONTENT.quests).flatMap((q) => q.unlocks?.enemies || []));
+  const gatedPickupIds = new Set(Object.values(CONTENT.quests).flatMap((q) => q.unlocks?.pickups || []));
+
   const enemies = {};
   for (const [id, e] of Object.entries(regionDef.enemies)) {
+    if (gatedEnemyIds.has(id)) continue;
     const kind = CONTENT.enemyKinds[e.kind];
     enemies[id] = { x: e.x, y: e.y, kind: e.kind, hp: kind.hp, maxHp: kind.hp, power: kind.power, alive: 1 };
   }
@@ -42,14 +50,31 @@ export function makeWorld(seed, options = {}) {
   }
   const pickups = {};
   for (const [id, p] of Object.entries(regionDef.pickups)) {
+    if (gatedPickupIds.has(id)) continue;
     pickups[id] = { x: p.x, y: p.y, item: p.item, taken: 0 };
   }
   const blocked = {};
   for (const b of regionDef.blocked) blocked[b] = 1;
 
+  // Quest defs carry their own unlock TEMPLATES (copied from content at
+  // construction, like everything else) so reduce.js can spawn them on
+  // accept without importing CONTENT — state stays a self-contained copy.
   const questDefs = {};
   for (const [qid, q] of Object.entries(CONTENT.quests)) {
-    questDefs[qid] = JSON.parse(JSON.stringify(q));
+    const def = JSON.parse(JSON.stringify(q));
+    if (q.unlocks) {
+      def.unlocks = { enemies: {}, pickups: {} };
+      for (const id of q.unlocks.enemies || []) {
+        const e = regionDef.enemies[id];
+        const kind = CONTENT.enemyKinds[e.kind];
+        def.unlocks.enemies[id] = { x: e.x, y: e.y, kind: e.kind, hp: kind.hp, maxHp: kind.hp, power: kind.power, alive: 1 };
+      }
+      for (const id of q.unlocks.pickups || []) {
+        const p = regionDef.pickups[id];
+        def.unlocks.pickups[id] = { x: p.x, y: p.y, item: p.item, taken: 0 };
+      }
+    }
+    questDefs[qid] = def;
   }
   const items = JSON.parse(JSON.stringify(CONTENT.items));
 

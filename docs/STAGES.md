@@ -3,6 +3,28 @@
 No stage begins until the previous stage's success criteria pass in
 `npm run smoke`. Closure evidence lives here, not in the game.
 
+## Post-ship fix (2026-07-07): quest objectives were order-dependent
+
+Live playtesting found a real bug: killing the two husks or grabbing the
+training capsule *before* talking to the Warden and accepting "Clear the
+Road" permanently soft-locked that objective at 0/2 — nothing respawned, and
+`questProgress()` only ever counted events that happened while the quest was
+already `active`.
+
+Rejected fix: retroactively crediting progress from world state at the
+moment of acceptance. The chosen fix instead makes objectives **agnostic of
+anything that happened before acceptance** — `husk1`, `husk2`, and
+`capsule1` don't exist in the world at all until `ACCEPT_QUEST` spawns them
+(`quest.unlocks` in content, applied by `world.js` at construction and by
+`reduce.js` on accept). There is no "already killed it" case to special-case
+because the entity simply wasn't there yet; completion always starts from a
+clean slate. `stalker1` (not quest-gated) remains available for open
+exploration and as the always-present target for mechanic-only tests.
+
+Evidence: `npm run smoke` 38/38 (new: entities absent pre-accept, unlocked
+ids fail loud if targeted early, appear correctly on accept); golden updated
+once (`c4b031a8`); Stage 2/4/5 e2e re-verified with no regressions.
+
 ## Stage 0 — Deterministic harness ✅ (closed 2026-07-07)
 
 Scope: repo scaffold; seeded RNG (sfc32, full-state O(1) restore); canonical
