@@ -7,8 +7,9 @@ import { makeInput } from './input.js';
 import { COLORS } from './renderer.js';
 import { CONTENT } from '../sim/content.js';
 import { hasSave, loadGame, clearSave } from './save.js';
+import { withHint } from './device-labels.js';
 
-function btn(ctx, z) {
+function btn(ctx, z, device) {
   ctx.fillStyle = 'rgba(136,146,176,0.14)';
   ctx.strokeStyle = z.on ? COLORS.pickup : 'rgba(136,146,176,0.6)';
   ctx.lineWidth = z.on ? 2 : 1;
@@ -17,7 +18,9 @@ function btn(ctx, z) {
   ctx.fillStyle = COLORS.text;
   ctx.font = 'bold 13px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(z.label, z.x + z.w / 2, z.y + z.h / 2 + 5);
+  // Hint recomputed from the ACTIVE device every frame, same as in-game modals.
+  const label = z.hintAction ? withHint(device, z.hintAction, z.label) : z.label;
+  ctx.fillText(label, z.x + z.w / 2, z.y + z.h / 2 + 5);
   ctx.textAlign = 'left';
   ctx.lineWidth = 1;
   return z;
@@ -68,7 +71,7 @@ export function runTitle(canvas) {
       }
     }
 
-    function draw() {
+    function draw(device) {
       ctx.fillStyle = COLORS.bg;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.textAlign = 'center';
@@ -87,14 +90,14 @@ export function runTitle(canvas) {
           zones.push(btn(ctx, {
             id, label: labels[id], on: i === selected,
             x: canvas.width / 2 - 90, y: 170 + i * 46, w: 180, h: 36,
-          }));
+          }, device));
         });
       } else if (screen === 'confirm') {
         ctx.fillStyle = COLORS.text;
         ctx.font = '14px system-ui, sans-serif';
         ctx.fillText('A saved run exists. Starting new erases it.', canvas.width / 2, 190);
-        zones.push(btn(ctx, { id: 'no', label: 'Keep it (Esc)', x: canvas.width / 2 - 190, y: 220, w: 170, h: 36 }));
-        zones.push(btn(ctx, { id: 'yes', label: 'Overwrite (Enter)', x: canvas.width / 2 + 20, y: 220, w: 170, h: 36 }));
+        zones.push(btn(ctx, { id: 'no', hintAction: 'cancel', label: 'Keep it', x: canvas.width / 2 - 190, y: 220, w: 170, h: 36 }, device));
+        zones.push(btn(ctx, { id: 'yes', hintAction: 'confirm', label: 'Overwrite', x: canvas.width / 2 + 20, y: 220, w: 170, h: 36 }, device));
       } else if (screen === 'setup') {
         ctx.fillStyle = COLORS.text;
         ctx.font = 'bold 14px system-ui, sans-serif';
@@ -102,7 +105,7 @@ export function runTitle(canvas) {
         archIds.forEach((id, i) => {
           const a = CONTENT.archetypes[id];
           const x = canvas.width / 2 - 300 + i * 210;
-          zones.push(btn(ctx, { id, label: a.name, on: i === archIdx, x, y: 175, w: 190, h: 34 }));
+          zones.push(btn(ctx, { id, label: a.name, on: i === archIdx, x, y: 175, w: 190, h: 34 }, device));
           ctx.fillStyle = COLORS.dim;
           ctx.font = '11px system-ui, sans-serif';
           ctx.fillText(a.blurb, x + 95, 226, 186);
@@ -110,10 +113,10 @@ export function runTitle(canvas) {
         ctx.fillStyle = COLORS.text;
         ctx.font = 'bold 13px system-ui, sans-serif';
         ctx.fillText('Tone', canvas.width / 2, 268);
-        zones.push(btn(ctx, { id: 'gentle', label: 'Gentle', on: difficulty === 'gentle', x: canvas.width / 2 - 130, y: 280, w: 120, h: 32 }));
-        zones.push(btn(ctx, { id: 'harsh', label: 'Harsh', on: difficulty === 'harsh', x: canvas.width / 2 + 10, y: 280, w: 120, h: 32 }));
-        zones.push(btn(ctx, { id: 'start', label: 'Begin (Enter)', x: canvas.width / 2 - 90, y: 335, w: 180, h: 36 }));
-        zones.push(btn(ctx, { id: 'back', label: 'Back (Esc)', x: canvas.width / 2 - 60, y: 380, w: 120, h: 28 }));
+        zones.push(btn(ctx, { id: 'gentle', label: 'Gentle', on: difficulty === 'gentle', x: canvas.width / 2 - 130, y: 280, w: 120, h: 32 }, device));
+        zones.push(btn(ctx, { id: 'harsh', label: 'Harsh', on: difficulty === 'harsh', x: canvas.width / 2 + 10, y: 280, w: 120, h: 32 }, device));
+        zones.push(btn(ctx, { id: 'start', hintAction: 'confirm', label: 'Begin', x: canvas.width / 2 - 90, y: 335, w: 180, h: 36 }, device));
+        zones.push(btn(ctx, { id: 'back', hintAction: 'cancel', label: 'Back', x: canvas.width / 2 - 60, y: 380, w: 120, h: 28 }, device));
       } else if (screen === 'controls') {
         ctx.fillStyle = COLORS.dim;
         ctx.font = '13px system-ui, sans-serif';
@@ -123,7 +126,7 @@ export function runTitle(canvas) {
           'Touch — on-screen pad and buttons',
         ];
         lines.forEach((l, i) => ctx.fillText(l, canvas.width / 2, 190 + i * 22));
-        zones.push(btn(ctx, { id: 'back', label: 'Back (Esc)', x: canvas.width / 2 - 60, y: 270, w: 120, h: 28 }));
+        zones.push(btn(ctx, { id: 'back', hintAction: 'cancel', label: 'Back', x: canvas.width / 2 - 60, y: 270, w: 120, h: 28 }, device));
       }
       ctx.textAlign = 'left';
       input.setZones(zones);
@@ -135,8 +138,8 @@ export function runTitle(canvas) {
     // this is free navigability for players with no pointer at all.
     let lastDy = 0, lastDx = 0;
     function frame() {
-      const { move, presses } = input.poll();
-      const zones = draw();
+      const { move, presses, device } = input.poll();
+      const zones = draw(input.hasTouch && device === 'keyboard' ? 'touch' : device);
 
       if (screen === 'menu') {
         const opts = menuOptions();

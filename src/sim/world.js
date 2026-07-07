@@ -88,6 +88,7 @@ export function makeWorld(seed, options = {}) {
       x: regionDef.spawn.x, y: regionDef.spawn.y,
       hp: arch.hp, maxHp: arch.hp,
       aura: 0, maxAura: arch.aura,
+      chargeHold: 0, // consecutive CHARGE ticks in the current hold — see reduce.js
       coins: 0,
       skills,
       inventory: [],

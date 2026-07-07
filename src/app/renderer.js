@@ -4,6 +4,8 @@
 // Returns this frame's touch/click zones so input hit-tests what was drawn.
 
 import { canSense, enemyReadout } from '../sim/info.js';
+import { withHint } from './device-labels.js';
+import { describeObjective } from './objective-text.js';
 
 export const TILE = 20;
 export const OX = 80, OY = 20; // world viewport offset inside the canvas
@@ -151,10 +153,7 @@ export function render(ctx, w, view) {
       const st = w.quests.active[qId];
       ctx.fillStyle = COLORS.dim;
       def.objectives.forEach((o, i) => {
-        const label = o.type === 'kill' ? `defeat ${o.target}`
-          : o.type === 'collect' ? `find ${o.item}`
-          : `reach ${o.zone}`;
-        ctx.fillText(`${label} ${st.progress[i]}/${o.n || 1}`, canvas.width - 10, qy);
+        ctx.fillText(`${describeObjective(o)} ${st.progress[i]}/${o.n || 1}`, canvas.width - 10, qy);
         qy += 13;
       });
       ctx.fillStyle = COLORS.text;
@@ -257,7 +256,10 @@ export function render(ctx, w, view) {
       const bw = 170, bh = 30;
       const x = canvas.width / 2 - bw / 2;
       const y = ly + 10 + i * 40;
-      zones.push(touchBtn(ctx, { id: b.id, label: b.label, x, y, w: bw, h: bh }));
+      // Hint recomputed every frame from the ACTIVE device — a baked-in
+      // "(Enter)" would go stale the moment a gamepad player pressed A.
+      const label = withHint(view.device, b.hintAction || b.id, b.label);
+      zones.push(touchBtn(ctx, { id: b.id, label, x, y, w: bw, h: bh }));
     });
     ctx.textAlign = 'left';
   }

@@ -124,7 +124,10 @@ export function makeInput(canvas) {
       dx: (down.right ? 1 : 0) - (down.left ? 1 : 0),
       dy: (down.down ? 1 : 0) - (down.up ? 1 : 0),
     };
-    return { move, presses, device };
+    // Charge is press-and-hold, not a one-shot action — expose the raw held
+    // state (already continuous across keyboard/touch/gamepad in `down`)
+    // alongside the edge-triggered `presses`.
+    return { move, presses, device, chargeHeld: !!down.charge };
   }
 
   return {

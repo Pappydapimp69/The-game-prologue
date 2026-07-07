@@ -13,6 +13,7 @@ import { makeInput } from './input.js';
 import { render } from './renderer.js';
 import { saveGame, clearSave } from './save.js';
 import { nightAmount } from './daynight-tint.js';
+import { describeObjective } from './objective-text.js';
 
 const MOVE_REPEAT_MS = 140;
 const TICK_MS = 500;
@@ -38,10 +39,12 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
     view.modal = {
       kind: 'dialog', title: 'PROLOGUE',
       lines: CONTENT.arc.intro,
-      buttons: [{ id: 'confirm', label: 'Begin (Enter)' }],
+      buttons: [{ id: 'confirm', label: 'Begin' }],
     };
   }
   let nextMoveAt = 0, nextTickAt = 0, dodgeUntil = 0;
+  let nextChargeAt = 0, wasCharging = false;
+  const CHARGE_TICK_MS = 100; // press-and-hold cadence — see reduce.js for the rate curve
   const enemyCd = {};
   let last = 0, frameNow = 0;
 
@@ -94,16 +97,16 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
               `${item.name} — heals ${item.heal} HP — ${item.price} coins. You have ${world.player.coins}.`,
             ],
             buttons: [
-              { id: 'confirm', label: `Buy ${item.name} (Enter)` },
-              { id: 'alt', label: `Drink ${item.name} (K)` },
-              { id: 'cancel', label: 'Leave (Esc)' },
+              { id: 'confirm', label: `Buy ${item.name}` },
+              { id: 'alt', label: `Drink ${item.name}` },
+              { id: 'cancel', label: 'Leave' },
             ],
           };
         } else if (!view.modal) {
           view.modal = {
             kind: 'dialog', title: npc.name,
             lines,
-            buttons: [{ id: 'cancel', label: 'Close (Esc)' }],
+            buttons: [{ id: 'cancel', label: 'Close' }],
           };
         }
         break;
@@ -113,15 +116,13 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
         view.modal = {
           kind: 'offer', quest: e.quest, title: `Quest: ${e.quest}`,
           lines: [
-            ...def.objectives.map((o) => o.type === 'kill'
-              ? `Defeat ${o.n} ${o.target}${o.n > 1 ? 's' : ''}`
-              : `Find the ${o.item}`),
+            ...def.objectives.map(describeObjective),
             `Reward: ${def.reward.coins} coins`,
             'No pressure — the offer stands if you walk away.',
           ],
           buttons: [
-            { id: 'confirm', label: 'Accept (Enter)' },
-            { id: 'cancel', label: 'Later (Esc)' },
+            { id: 'confirm', label: 'Accept' },
+            { id: 'cancel', label: 'Later' },
           ],
         };
         break;
@@ -146,8 +147,8 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
             kind: 'fate', title: 'It kneels, beaten',
             lines: ['The Ravager is finished either way.', 'What are you?'],
             buttons: [
-              { id: 'confirm', label: 'Spare it (Enter)' },
-              { id: 'alt', label: 'Finish it (K)' },
+              { id: 'confirm', label: 'Spare it' },
+              { id: 'alt', label: 'Finish it' },
             ],
           };
         }
@@ -170,7 +171,7 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
         view.modal = {
           kind: 'defeat', title: 'You fall...',
           lines: ['The vale goes quiet.'],
-          buttons: [{ id: 'confirm', label: 'Rise Again (Enter)' }],
+          buttons: [{ id: 'confirm', label: 'Rise Again' }],
         };
         break;
       case 'exit_locked': toast('The gate is sealed. You are not done here.'); break;
@@ -180,7 +181,7 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
         view.modal = {
           kind: 'dialog', title: 'The Ravager',
           lines: CONTENT.arc.bossAppeared,
-          buttons: [{ id: 'confirm', label: 'Stand (Enter)' }],
+          buttons: [{ id: 'confirm', label: 'Stand' }],
         };
         break;
       case 'mentor_fallen':
@@ -189,7 +190,7 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
         view.modal = {
           kind: 'dialog', title: 'Oren falls',
           lines: CONTENT.arc.mentorFallen,
-          buttons: [{ id: 'confirm', label: 'Alone (Enter)' }],
+          buttons: [{ id: 'confirm', label: 'Alone' }],
         };
         break;
       case 'prologue_complete': {
@@ -203,7 +204,7 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
             CONTENT.arc.exportHint,
             code,
           ],
-          buttons: [{ id: 'confirm', label: 'Copy code (Enter)' }],
+          buttons: [{ id: 'confirm', label: 'Copy code' }],
         };
         break;
       }
@@ -247,7 +248,7 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
     }
   }
 
-  function handleWorld(now, move, presses) {
+  function handleWorld(now, move, presses, chargeHeld) {
     if (presses.dodge) { dodgeUntil = now + DODGE_MS; toast('Dodge!'); }
 
     if (move.dx || move.dy) {
@@ -269,7 +270,17 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
       if (id) dispatch({ type: 'AURA_BLAST', enemyId: id });
       else toast('No enemy in range');
     }
-    if (presses.charge) dispatch({ type: 'CHARGE' });
+    // Press-and-hold: a fresh hold always fires immediately (start:true
+    // resets the sim's ramp), then repeats at a fixed real-time cadence for
+    // as long as the button stays down. A quick tap still charges a little —
+    // it just doesn't reward mashing.
+    if (chargeHeld) {
+      if (!wasCharging || now >= nextChargeAt) {
+        dispatch({ type: 'CHARGE', start: !wasCharging });
+        nextChargeAt = now + CHARGE_TICK_MS;
+      }
+    }
+    wasCharging = chargeHeld;
     if (presses.interact) {
       const npcId = nearest(world.npcs, 1);
       const pickId = nearest(world.pickups, 1, (p) => !p.taken);
@@ -315,7 +326,7 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
     last = now;
     frameNow = now;
 
-    const { move, presses, device } = input.poll();
+    const { move, presses, device, chargeHeld } = input.poll();
     view.device = input.hasTouch && device === 'keyboard' ? 'touch' : device;
 
     // Hit-stop: gameplay logic freezes for a few dozen ms; the frame still
@@ -325,7 +336,7 @@ export function startGame(canvas, seed, options = {}, initialWorld = null) {
     const frozen = now < hitStopUntil;
     if (!frozen) {
       if (view.modal) handleModal(presses);
-      else handleWorld(now, move, presses);
+      else handleWorld(now, move, presses, chargeHeld);
     }
 
     // The guide line: the arc's next incomplete step, in order. One hint at

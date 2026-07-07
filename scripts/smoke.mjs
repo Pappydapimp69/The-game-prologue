@@ -17,10 +17,12 @@ import { validateContent } from '../src/sim/validate.js';
 import { canSense } from '../src/sim/info.js';
 import { exportSaga, importSaga } from '../src/sim/saga.js';
 import { isNight, DAY_CYCLE_TICKS } from '../src/sim/daynight.js';
+import { keyHint, withHint } from '../src/app/device-labels.js';
+import { describeObjective } from '../src/app/objective-text.js';
 
 // Baked golden value for the demo playthrough. An INTENDED sim/content change
 // updates this one line (review the diff); an unintended divergence is a bug.
-const GOLDEN_DEMO_FINGERPRINT = 'c4b031a8';
+const GOLDEN_DEMO_FINGERPRINT = '1d995e50';
 
 const failures = [];
 let count = 0;
@@ -191,6 +193,33 @@ test('blocked tile stops movement', () => {
   const ev = replay(w, [{ type: 'MOVE', dx: 1, dy: 0 }]);
   assert(ev.some(e => e.type === 'blocked'));
   assert(w.player.x === 9 && w.player.y === 5, 'player moved into a wall');
+});
+
+test('charge is press-and-hold: ramps up, then throttles hard above 80% aura', () => {
+  const w = makeWorld(1, { archetype: 'channeler' }); // maxAura 14, room to see the whole curve
+  const cmds = Array.from({ length: 10 }, (_, i) => ({ type: 'CHARGE', start: i === 0 }));
+  const events = replay(w, cmds);
+  const gains = events.filter((e) => e.type === 'charged').map((e) => e.gain);
+  assertEqual(gains.join(','), '2,1,1,1,2,2,2,2,1,0',
+    `unexpected charge curve: ${gains.join(',')}`);
+  assertEqual(w.player.aura, w.player.maxAura, 'should have hit the cap by hold 9');
+});
+
+test('the 80%+ throttle ignores the hold ramp entirely, however long held', () => {
+  const w = makeWorld(1, { archetype: 'channeler' });
+  w.player.aura = 12; // 12/14 = 85%, at/above the 80% mark
+  w.player.chargeHold = 50; // a very long-established hold
+  const ev = replay(w, [{ type: 'CHARGE' }]);
+  assert(ev[0].gain <= 1, `throttle should cap gain at 1 near full regardless of ramp, got ${ev[0].gain}`);
+});
+
+test('starting a new hold resets the ramp even after a long previous one', () => {
+  const w = makeWorld(1, { archetype: 'channeler' });
+  w.player.aura = 0;
+  w.player.chargeHold = 50; // stale ramp from a previous, now-released hold
+  const ev = replay(w, [{ type: 'CHARGE', start: true }]);
+  assertEqual(ev[0].gain, 2, 'start:true should compute gain as if hold were 0, not continue the stale ramp');
+  assertEqual(w.player.chargeHold, 1, 'chargeHold should restart from 0 -> 1, not keep climbing from 50');
 });
 
 test('aura blast needs charge; charge caps at max', () => {
@@ -394,6 +423,34 @@ test('night stacks +1 enemy damage on top of difficulty, deterministically', () 
     return w.player.maxHp - w.player.hp;
   };
   assertEqual(strike(DAY_CYCLE_TICKS / 2), strike(0) + 1, 'night should add exactly +1 over day, same roll');
+});
+
+console.log('# device-adaptive button hints');
+
+test('modal/title hints match the active device, not a baked assumption', () => {
+  assertEqual(keyHint('keyboard', 'confirm'), 'Enter');
+  assertEqual(keyHint('keyboard', 'cancel'), 'Esc');
+  assertEqual(keyHint('gamepad', 'confirm'), 'A');
+  assertEqual(keyHint('gamepad', 'cancel'), 'B');
+  assertEqual(keyHint('gamepad', 'alt'), 'X');
+  assertEqual(keyHint('touch', 'confirm'), '', 'touch buttons are the input — no key hint needed');
+  assertEqual(withHint('gamepad', 'confirm', 'Accept'), 'Accept (A)');
+  assertEqual(withHint('touch', 'confirm', 'Accept'), 'Accept', 'no dangling parens on touch');
+});
+
+console.log('# objective text (shared by tracker and offer modal)');
+
+test('describeObjective covers all three objective types with no undefined', () => {
+  const kill = describeObjective({ type: 'kill', target: 'husk', n: 2 });
+  const collect = describeObjective({ type: 'collect', item: 'training-capsule' });
+  const reach = describeObjective({ type: 'reach', zone: 'east-pass' });
+  for (const s of [kill, collect, reach]) assert(!s.includes('undefined'), `leaked undefined: ${s}`);
+  assert(kill.includes('husk') && kill.includes('2'));
+  assert(collect.includes('training-capsule'));
+  assert(reach.toLowerCase().includes('east') && reach.toLowerCase().includes('pass'));
+  let threw = false;
+  try { describeObjective({ type: 'nope' }); } catch { threw = true; }
+  assert(threw, 'unknown objective type should fail loud, not silently stringify to undefined');
 });
 
 console.log('# renderer boundary');

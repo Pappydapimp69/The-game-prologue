@@ -17,8 +17,16 @@ import { isNight } from './daynight.js';
 const MELEE_RANGE = 1;   // Chebyshev tiles
 const BLAST_RANGE = 3;
 const BLAST_COST = 3;
-const CHARGE_GAIN = 2;
 const XP_PER_LEVEL = 5;  // lvl N -> N+1 costs N*XP_PER_LEVEL
+
+// Charge is press-and-hold, not tap-spam: the presentation dispatches one
+// CHARGE per fixed real-time tick while the button stays down (start:true on
+// the frame the hold begins, resetting the ramp). Rate = a mild ramp with
+// hold duration, reshaped by CURRENT aura fill: fast from empty, throttled
+// hard above the 80% mark regardless of how long the hold has run.
+const CHARGE_RAMP_STEP = 4;  // every N consecutive ticks held...
+const CHARGE_RAMP_CAP = 8;   // ...up to this many ticks of bonus
+const CHARGE_TOP_PCT = 80;   // aura % at/above which charging is throttled
 
 export function reduce(state, command) {
   const events = reduceCore(state, command);
@@ -125,8 +133,24 @@ function reduceCore(state, command) {
     }
 
     case 'CHARGE': {
-      state.player.aura = Math.min(state.player.maxAura, state.player.aura + CHARGE_GAIN);
-      return [{ type: 'charged', aura: state.player.aura }];
+      const p = state.player;
+      if (command.start) p.chargeHold = 0;
+      const hold = p.chargeHold;
+      const pct = p.maxAura > 0 ? Math.floor((p.aura * 100) / p.maxAura) : 100;
+
+      let gain;
+      if (pct >= CHARGE_TOP_PCT) {
+        // Throttled near the cap — half the base rate, ignoring the ramp
+        // entirely: "slower after 80%, regardless of how long held."
+        gain = hold % 2 === 0 ? 1 : 0;
+      } else {
+        gain = 1 + Math.floor(Math.min(hold, CHARGE_RAMP_CAP) / CHARGE_RAMP_STEP);
+        if (pct <= 0) gain += 1; // fills fastest from empty
+      }
+
+      p.aura = Math.min(p.maxAura, p.aura + gain);
+      p.chargeHold = hold + 1;
+      return [{ type: 'charged', aura: p.aura, gain }];
     }
 
     case 'AURA_BLAST': {
