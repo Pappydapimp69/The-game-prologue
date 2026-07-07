@@ -131,6 +131,13 @@ export function validateContent(c) {
   for (const [qid, q] of Object.entries(c.quests || {})) {
     for (const [i, o] of (q.objectives || []).entries()) {
       if (o.type === 'kill') {
+        // This stays a CONTENT-level invariant: enough of the target kind
+        // must be authored to satisfy `n` at all. reduce.js's
+        // questRespawnObserve is pure runtime insurance layered on top of
+        // whatever's authored here (it reuses these same unlock templates
+        // if every one dies before the objective is met) — it doesn't
+        // change what "enough" means at the data level, so this check is
+        // unchanged.
         let count = 0;
         for (const r of Object.values(c.regions || {})) {
           for (const e of Object.values(r.enemies || {})) if (e.kind === o.target) count++;

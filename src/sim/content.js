@@ -98,7 +98,15 @@ export const CONTENT = {
       capsule: 'A training capsule glints to the north. Take it.',
       crate: 'Break the old supply crate. Old habits, free coins.',
       melee: 'A husk blocks the road. Strike it down up close.',
-      aura: 'Charge your aura, then blast a husk from range.',
+      // Deliberately NOT "blast a husk": this teaching step only wants one
+      // aura hit landed on ANY foe (arcObserve in reduce.js keys off the
+      // attack kind, never the target's kind). Naming a husk here reads as
+      // if the Warden's "Defeat 2 husks" kill count needs an aura kill
+      // specifically — it never has. questProgress keys kill progress off
+      // the enemy's OWN kind, so melee, aura, or ally strikes all count
+      // identically. Keep this wording general so it can't be misread as a
+      // quest requirement again.
+      aura: 'Charge your aura, then loose a blast at any foe from range.',
       tonic: 'Trade at the shop — a tonic may save your life.',
       pass: 'Scout the eastern pass.',
       boss: 'Something is coming. Stand with the Warden.',

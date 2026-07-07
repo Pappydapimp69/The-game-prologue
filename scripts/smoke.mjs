@@ -317,6 +317,103 @@ test('reach objective progresses on entering the zone', () => {
   assert(ev.some((e) => e.type === 'objective_progress' && e.objective === 2), 'reach did not progress');
 });
 
+console.log('# quest kill objectives: weapon-agnostic tracking + respawn safety net');
+
+// Reported symptom: melee kills on "Clear the Road" husks supposedly didn't
+// advance the kill count the way aura-blast kills did. hitEnemy() passes the
+// ENEMY's kind (e.kind) to questProgress, never the attack kind — so on a
+// reading of reduce.js this already looked weapon-agnostic. These tests get
+// ground truth from the running sim, locking in whichever was true so a
+// regression can't reintroduce the reported confusion silently.
+
+const killWithMelee = (w, id) => {
+  w.player.x = w.enemies[id].x - 1; w.player.y = w.enemies[id].y;
+  let guard = 0;
+  while (w.enemies[id].alive && guard++ < 50) replay(w, [{ type: 'MELEE', enemyId: id }]);
+  assert(!w.enemies[id].alive, `${id} did not die within the guard budget`);
+};
+
+const killWithBlast = (w, id) => {
+  w.player.x = w.enemies[id].x - 1; w.player.y = w.enemies[id].y;
+  let guard = 0;
+  while (w.enemies[id].alive && guard++ < 50) {
+    if (w.player.aura < 3) replay(w, [{ type: 'CHARGE', start: guard === 1 }]);
+    else replay(w, [{ type: 'AURA_BLAST', enemyId: id }]);
+  }
+  assert(!w.enemies[id].alive, `${id} did not die within the guard budget`);
+};
+
+test('melee-killing both husks advances the kill objective exactly like blast-killing them', () => {
+  const wMelee = makeWorld(1);
+  replay(wMelee, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  killWithMelee(wMelee, 'husk1');
+  assertEqual(wMelee.quests.active['clear-the-road'].progress[0], 1, 'melee kill #1 did not advance the kill objective');
+  killWithMelee(wMelee, 'husk2');
+  assert(wMelee.quests.completed['clear-the-road'] !== 1, 'kill objective alone should not complete the quest (collect/reach still pending)');
+
+  const wBlast = makeWorld(1);
+  replay(wBlast, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  killWithBlast(wBlast, 'husk1');
+  assertEqual(wBlast.quests.active['clear-the-road'].progress[0], 1, 'blast kill #1 did not advance the kill objective');
+  killWithBlast(wBlast, 'husk2');
+
+  assert(!wMelee.enemies.husk1.alive && !wMelee.enemies.husk2.alive, 'melee run: husks should be dead');
+  assert(!wBlast.enemies.husk1.alive && !wBlast.enemies.husk2.alive, 'blast run: husks should be dead');
+});
+
+test('kill-objective safety net: an unlocked husk respawns if all are dead before the objective is satisfied', () => {
+  const w = makeWorld(1);
+  replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  killWithMelee(w, 'husk1');
+  killWithMelee(w, 'husk2');
+  // Under shipped content this always satisfies the objective (exactly 2
+  // husks unlock for a need of 2) — the safety net is defense-in-depth, not
+  // reachable through normal play. Simulate the regression it guards
+  // against: both unlocked targets dead, objective still short.
+  delete w.quests.completed['clear-the-road'];
+  w.quests.active['clear-the-road'] = { progress: [1, 1, 1], respawnAt: [0, 0, 0] };
+  assert(!w.enemies.husk1.alive && !w.enemies.husk2.alive, 'setup invariant broken: both husks should be dead');
+
+  replay(w, [{ type: 'TICK' }]);
+  assert(!w.enemies.husk1.alive && !w.enemies.husk2.alive, 'respawn fired instantly instead of after a delay');
+
+  for (let i = 0; i < 20 && !(w.enemies.husk1.alive || w.enemies.husk2.alive); i++) {
+    replay(w, [{ type: 'TICK' }]);
+  }
+  assert(w.enemies.husk1.alive || w.enemies.husk2.alive, 'no husk respawned within a reasonable tick budget');
+});
+
+test('the safety net never fires once the kill objective is already satisfied', () => {
+  const w = makeWorld(1);
+  replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  killWithMelee(w, 'husk1');
+  killWithMelee(w, 'husk2');
+  assertEqual(w.quests.active['clear-the-road'].progress[0], 2, 'setup: kill objective should read 2/2');
+  for (let i = 0; i < 20; i++) replay(w, [{ type: 'TICK' }]);
+  assert(!w.enemies.husk1.alive && !w.enemies.husk2.alive, 'a satisfied kill objective must not respawn its targets');
+});
+
+test('the safety net backfills respawnAt on a pre-existing save that predates it', () => {
+  const w = makeWorld(1);
+  replay(w, [{ type: 'TALK', npcId: 'warden' }, { type: 'ACCEPT_QUEST', questId: 'clear-the-road' }]);
+  // Simulate a save serialized before this field existed.
+  delete w.quests.active['clear-the-road'].respawnAt;
+  let threw = false;
+  try { replay(w, [{ type: 'TICK' }]); } catch { threw = true; }
+  assert(!threw, 'loading a pre-existing save without respawnAt should not crash the reducer');
+  assert(Array.isArray(w.quests.active['clear-the-road'].respawnAt), 'respawnAt was not backfilled');
+});
+
+test('the respawn safety net does not leak into the golden demo playthrough', () => {
+  const w = runDemo();
+  // The demo always keeps at least one husk alive while the other is being
+  // finished off (see demo.js), so the "all unlocked targets dead" trigger
+  // never fires — no extra enemy id should exist beyond what the demo spawns.
+  const expected = ['husk1', 'husk2', 'stalker1', 'ravager1'].sort();
+  assertEqual(Object.keys(w.enemies).sort().join(','), expected.join(','),
+    'unexpected enemy ids in state — respawn logic fired during the golden demo');
+});
+
 console.log('# stage 4: the prologue arc');
 
 test('headless full-arc completion: taught, fought, chose, left', () => {
